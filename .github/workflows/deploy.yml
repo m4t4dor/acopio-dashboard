@@ -1,0 +1,83 @@
+name: Deploy to cPanel
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.changes.outputs.frontend }}
+      backend: ${{ steps.changes.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            backend:
+              - 'backend/**'
+
+  deploy-frontend:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 22.17
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+      - name: Build frontend
+        working-directory: ./frontend
+        run: npm run build
+        env:
+          VITE_APP_BASE_URL: /
+          VITE_APP_URL: https://acopio.ikorp.pe
+          VITE_API_URL: https://acopio-api.ikorp.pe
+      - name: Deploy Frontend via FTP
+        uses: SamKirkland/FTP-Deploy-Action@4.3.1
+        with:
+          server: ftp.ikorp.pe
+          username: github@ikorp.pe
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./frontend/dist/
+          server-dir: ./centroacopio/dashboard/frontend/
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.github/**
+            **/.vscode/**
+
+  deploy-backend:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Deploy Backend via FTP
+        uses: SamKirkland/FTP-Deploy-Action@4.3.1
+        with:
+          server: ftp.ikorp.pe
+          username: github@ikorp.pe
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./backend/
+          server-dir: ./centroacopio/dashboard/backend/
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.github/**
+            **/.vscode/**
+            /vendor/**
+            .env
+            /public/.htaccess

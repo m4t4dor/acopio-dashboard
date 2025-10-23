@@ -1,0 +1,607 @@
+begin::mesas.service.ts
+import { AxiosPromise } from "axios"
+import axiosInstance from "@/libs/axios"
+import { TMesa, TMesasConPaginacion } from "@/types"
+
+type TGetMesasParams = {
+page?: number
+per_page?: number
+filtros?: {
+nombre?: string
+}
+}
+
+type TGetMesasResponse = {
+content: {
+mesas: TMesasConPaginacion
+}
+}
+
+export const getMesas = async (params?: TGetMesasParams): AxiosPromise<TGetMesasResponse> => {
+return axiosInstance.get("/mesas", { params })
+}
+
+type TStoreMesaResponse = {
+message: string
+content: {
+mesa: TMesa
+}
+}
+
+export const storeMesa = async (data: object): AxiosPromise<TStoreMesaResponse> => {
+return axiosInstance.post("/mesas", data)
+}
+
+type TEditMesaResponse = {
+content: {
+mesa: TMesa
+}
+}
+
+export const editMesa = async (id: number): AxiosPromise<TEditMesaResponse> => {
+return axiosInstance.get(/mesas/${id}/edit)
+}
+
+type TUpdateMesaResponse = {
+message: string
+content: {
+mesa: TMesa
+}
+}
+
+export const updateMesa = async (id: number, data: object): AxiosPromise<TUpdateMesaResponse> => {
+return axiosInstance.put(/mesas/${id}, data)
+}
+
+type TDeleteMesaResponse = {
+message: string
+}
+
+export const deleteMesa = async (id: number): AxiosPromise<TDeleteMesaResponse> => {
+return axiosInstance.delete(/mesas/${id})
+}
+end::mesas.service.ts
+
+begin::MesaForm.tsx
+import InputFieldForm from "@/components/form/InputFieldForm"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import { renderizarErroresDeValidacion } from "@/helpers"
+import { useToast } from "@/hooks/use-toast"
+import { yupResolver } from "@hookform/resolvers/yup"
+import { isAxiosError } from "axios"
+import { useEffect, useMemo, useState } from "react"
+import { useForm, Controller } from "react-hook-form"
+import * as yup from "yup"
+import { editMesa, storeMesa, updateMesa } from "./mesas.service"
+import { Switch } from "@/components/ui/switch"
+
+const schema = yup
+.object({
+nombre: yup.string().required("Ingrese un nombre"),
+estado: yup.mixed().oneOf(["LIBRE", "OCUPADO"]).required("Seleccione un estado"),
+activo: yup.boolean(),
+})
+.required()
+
+type FormValues = yup.InferType<typeof schema>
+
+type Props = {
+recordId?: number
+onSaved?: () => void
+}
+
+const MesaForm = ({ recordId, onSaved }: Props) => {
+const { toast } = useToast()
+const isEdit = useMemo(() => !!recordId, [recordId])
+
+const { handleSubmit, control, setValue, setError } = useForm<FormValues>({
+	defaultValues: {
+		nombre: "",
+		estado: "LIBRE",
+		activo: true,
+	},
+	resolver: yupResolver(schema),
+})
+
+const [loading, setLoading] = useState({
+	view: true,
+	submit: false,
+})
+
+const onValidForm = async (data: FormValues) => {
+	try {
+		setLoading((prev) => ({ ...prev, submit: true }))
+
+		if (isEdit) {
+			const response = await updateMesa(recordId!, data)
+			toast({
+				variant: "success",
+				title: "Éxito",
+				description: response.data.message,
+			})
+		} else {
+			const response = await storeMesa(data)
+			toast({
+				variant: "success",
+				title: "Éxito",
+				description: response.data.message,
+			})
+
+			setValue("nombre", "")
+			setValue("estado", "LIBRE")
+			setValue("activo", true)
+		}
+
+		if (onSaved) {
+			onSaved()
+		}
+	} catch (error) {
+		console.error(error)
+
+		toast({
+			variant: "destructive",
+			title: "Error",
+			description: isAxiosError(error)
+				? error.response?.data?.message || "Ocurrió un error al procesar la solicitud."
+				: "Ocurrió un error al procesar la solicitud.",
+		})
+
+		renderizarErroresDeValidacion(error, setError)
+	} finally {
+		setLoading((prev) => ({ ...prev, submit: false }))
+	}
+}
+
+const onInvalidForm = () => {
+	toast({
+		variant: "destructive",
+		title: "Error",
+		description: "Por favor, revise los campos marcados en rojo.",
+	})
+}
+
+const getViewData = async () => {
+	if (isEdit) {
+		try {
+			const response = await editMesa(recordId!)
+			const { mesa } = response.data.content
+
+			setValue("nombre", mesa.nombre)
+			setValue("estado", mesa.estado)
+			setValue("activo", mesa.activo)
+			setLoading((prev) => ({ ...prev, view: false }))
+		} catch (error) {
+			console.error(error)
+			toast({
+				variant: "destructive",
+				title: "Error",
+				description: isAxiosError(error)
+					? error.response?.data?.message || "Ocurrió un error al procesar la solicitud."
+					: "Ocurrió un error al procesar la solicitud.",
+			})
+		}
+	} else {
+		setLoading((prev) => ({ ...prev, view: false }))
+	}
+}
+
+useEffect(() => {
+	getViewData()
+}, [])
+
+if (loading.view) {
+	return (
+		<div className="flex flex-col gap-4">
+			<Skeleton className="h-4 w-full" />
+			<Skeleton className="h-4 w-full" />
+			<Skeleton className="h-4 w-full" />
+		</div>
+	)
+}
+
+return (
+	<>
+		<form onSubmit={handleSubmit(onValidForm, onInvalidForm)}>
+			<div className="mb-2">
+				<label className="form-label">Nombre</label>
+				<InputFieldForm control={control} name="nombre" />
+			</div>
+			<div className="mb-2">
+				<label className="form-label">Estado</label>
+				<Controller
+					control={control}
+					name="estado"
+					render={({ field }) => (
+						<select {...field} className="form-select">
+							<option value="LIBRE">LIBRE</option>
+							<option value="OCUPADO">OCUPADO</option>
+						</select>
+					)}
+				/>
+			</div>
+			<div className="mb-2">
+				<label className="form-label">Activo</label>
+				<Controller
+					name="activo"
+					control={control}
+					render={({ field }) => (
+						<label className="flex items-center gap-2">
+							<Switch checked={field.value} onCheckedChange={field.onChange} />
+							{field.value ? "Activo" : "Inactivo"}
+						</label>
+					)}
+				/>
+			</div>
+			<div className="text-end">
+				<Button type="submit" disabled={loading.submit} color="primary">
+					Guardar
+				</Button>
+			</div>
+		</form>
+	</>
+)
+}
+
+export default MesaForm
+end::MesaForm.tsx
+
+begin::MesaEditModal.tsx
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import MesaForm from "./MesaForm"
+
+type MesaEditModalProps = {
+recordId: number
+onClose: () => void
+onSaved?: () => void
+}
+
+const MesaEditModal = ({ recordId, onClose, onSaved }: MesaEditModalProps) => {
+const onOpenChange = (isOpen: boolean) => {
+if (!isOpen) {
+onClose()
+}
+}
+
+return (
+	<Dialog defaultOpen={true} onOpenChange={onOpenChange}>
+		<DialogContent className="max-w-5xl">
+			<DialogHeader>
+				<DialogTitle>Editar mesa</DialogTitle>
+			</DialogHeader>
+			<MesaForm recordId={recordId} onSaved={onSaved} />
+		</DialogContent>
+	</Dialog>
+)
+}
+
+export default MesaEditModal
+end::MesaEditModal.tsx
+
+begin::MesaNewModal.tsx
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import MesaForm from "./MesaForm"
+
+type MesaNewModalProps = {
+onClose: () => void
+onSaved?: () => void
+}
+
+const MesaNewModal = ({ onClose, onSaved }: MesaNewModalProps) => {
+const onOpenChange = (isOpen: boolean) => {
+if (!isOpen) {
+onClose()
+}
+}
+
+return (
+	<Dialog defaultOpen={true} onOpenChange={onOpenChange}>
+		<DialogContent className="max-w-5xl">
+			<DialogHeader>
+				<DialogTitle>Crear mesa</DialogTitle>
+			</DialogHeader>
+			<MesaForm onSaved={onSaved} />
+		</DialogContent>
+	</Dialog>
+)
+}
+
+export default MesaNewModal
+end::MesaNewModal.tsx
+
+begin::mesas-table-columns.tsx
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { TooltipShortcut } from "@/components/ui/tooltip"
+import { TMesa } from "@/types"
+import { ColumnDef } from "@tanstack/react-table"
+import { PenIcon, TrashIcon } from "lucide-react"
+import { TMesasTableMeta } from "./MesasPage"
+
+export const columns: ColumnDef<TMesa>[] = [
+{
+accessorKey: "nombre",
+header: "Nombre",
+},
+{
+accessorKey: "estado",
+header: "Estado",
+cell: ({ row: { original } }) => original.estado,
+},
+{
+accessorKey: "activo",
+header: "Activo",
+cell: ({ row }) => {
+const activo = row.original.activo
+return <Badge variant={activo ? "success" : "destructive"}>{activo ? "Activo" : "Inactivo"}</Badge>
+},
+},
+{
+id: "actions",
+header: "Acciones",
+size: 100,
+cell: ({ row, table }) => {
+const meta = table.options.meta as TMesasTableMeta
+return (
+<div className="flex space-x-2">
+<TooltipShortcut content="Editar">
+<Button onClick={() => meta?.onEditarMesa(row.original)} color="warning" size="icon-sm">
+<PenIcon size={20} />
+</Button>
+</TooltipShortcut>
+<TooltipShortcut content="Eliminar">
+<Button color="danger" size="icon-sm" onClick={() => meta?.onEliminarMesa(row.original.id)}>
+<TrashIcon size={20} />
+</Button>
+</TooltipShortcut>
+</div>
+)
+},
+},
+]
+end::mesas-table-columns.tsx
+
+begin::MesasPage.tsx
+import Alert from "@/components/Alert"
+import CustomBreadcrumb from "@/components/antdesign/CustomBreadcrumb"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import DataTableLayout from "@/components/ui/datatable-layout"
+import { DataTablePagination } from "@/components/ui/datatable-pagination"
+import { Skeleton } from "@/components/ui/skeleton"
+import { ToastAction } from "@/components/ui/toast"
+import { useToast } from "@/hooks/use-toast"
+import { TMesa, TMesasConPaginacion } from "@/types"
+import { getCoreRowModel, PaginationState, useReactTable } from "@tanstack/react-table"
+import { Plus } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import MesaEditModal from "./MesaEditModal"
+import MesaNewModal from "./MesaNewModal"
+import { deleteMesa, getMesas } from "./mesas.service"
+import { columns } from "./mesas-table-columns"
+import InputField from "@/components/form/InputField"
+import { isAxiosError } from "axios"
+
+export type TMesasTableMeta = {
+onEditarMesa: (mesa: TMesa) => void
+onEliminarMesa: (id: number) => void
+}
+
+type TFiltros = {
+nombre: string
+}
+
+const MesasPage = () => {
+const { toast } = useToast()
+const [loading, setLoading] = useState(true)
+
+const [paginacion, setPaginacion] = useState<PaginationState>({
+	pageIndex: 0,
+	pageSize: 10,
+})
+
+const [mesasConPaginacion, setMesasConPaginacion] = useState<TMesasConPaginacion>()
+const defaultData = useMemo(() => [], [])
+
+const [modals, setModals] = useState<{
+	showMesasModal: boolean
+	mesasModal: TMesa | null
+	showMesaNewModal: boolean
+	showMesaEditModal: boolean
+	mesaEditarModal: TMesa | null
+}>({
+	showMesasModal: false,
+	mesasModal: null,
+	showMesaNewModal: false,
+	showMesaEditModal: false,
+	mesaEditarModal: null,
+})
+
+const [filtros, setFiltros] = useState<TFiltros>({ nombre: "" })
+
+const getViewData = async () => {
+	setLoading(true)
+	try {
+		const response = await getMesas({
+			page: paginacion.pageIndex + 1,
+			per_page: paginacion.pageSize,
+			filtros,
+		})
+		setMesasConPaginacion(response.data.content.mesas)
+		setLoading(false)
+	} catch (error) {
+		console.error(error)
+		setLoading(false)
+	}
+}
+
+const onEliminarMesa = async (id: number) => {
+	toast({
+		variant: "destructive",
+		title: "Confirmar eliminación",
+		description: "¿Estás seguro de eliminar este registro?",
+		action: (
+			<ToastAction
+				altText="Eliminar"
+				onClick={async () => {
+					try {
+						const response = await deleteMesa(id)
+						toast({
+							variant: "success",
+							title: "Éxito",
+							description: response.data.message,
+						})
+						getViewData()
+					} catch (error) {
+						console.error(error)
+						toast({
+							variant: "destructive",
+							title: "Error",
+							description: isAxiosError(error) ? error.response?.data.message : "Ocurrió un error al eliminar el registro.",
+						})
+					}
+				}}
+			>
+				Eliminar
+			</ToastAction>
+		),
+	})
+}
+
+const onNuevaMesa = () => {
+	setModals((prevModals) => ({
+		...prevModals,
+		showMesaNewModal: true,
+	}))
+}
+
+const onEditarMesa = (mesa: TMesa) => {
+	setModals((prevModals) => ({
+		...prevModals,
+		showMesaEditModal: true,
+		mesaEditarModal: mesa,
+	}))
+}
+
+const table = useReactTable({
+	data: mesasConPaginacion?.data || defaultData,
+	columns: columns,
+	rowCount: mesasConPaginacion?.total || 0,
+	state: {
+		pagination: paginacion,
+	},
+	onPaginationChange: setPaginacion,
+	getCoreRowModel: getCoreRowModel(),
+	manualPagination: true,
+	meta: {
+		onEditarMesa,
+		onEliminarMesa,
+	} as TMesasTableMeta,
+})
+
+useEffect(() => {
+	getViewData()
+}, [paginacion])
+
+return (
+	<>
+		<CustomBreadcrumb
+			links={[
+				{
+					label: "Mesas",
+				},
+			]}
+		/>
+		<Card className="mt-4">
+			<CardHeader className="flex flex-row items-center justify-between">
+				<div>
+					<CardTitle>Mesas</CardTitle>
+				</div>
+				<div>
+					<Button onClick={onNuevaMesa} color="success">
+						<Plus size={16} /> Nueva Mesa
+					</Button>
+				</div>
+			</CardHeader>
+			<CardContent>
+				<form
+					className="mb-4"
+					onSubmit={(e) => {
+						e.preventDefault()
+						getViewData()
+					}}
+				>
+					<div className="flex-cols flex-cols-2 flex-cols-gap-4">
+						<div className="mb-4">
+							<label className="form-label">Nombre</label>
+							<InputField
+								value={filtros.nombre}
+								onChange={(value) => setFiltros((prev) => ({ ...prev, nombre: value }))}
+							/>
+						</div>
+					</div>
+					<div className="text-end">
+						<Button color="primary" type="submit">
+							Buscar
+						</Button>
+					</div>
+				</form>
+				{loading ? (
+					<div className="flex flex-col gap-4">
+						<Skeleton className="h-4 w-full" />
+						<Skeleton className="h-4 w-full" />
+						<Skeleton className="h-4 w-full" />
+					</div>
+				) : (mesasConPaginacion?.total || 0) > 0 ? (
+					<div>
+						<h5 className="font-semibold text-sm mb-2">({mesasConPaginacion?.total}) resultados</h5>
+						<DataTableLayout table={table} />
+						<DataTablePagination table={table} className="mt-4" />
+					</div>
+				) : (
+					<Alert type="info">No hay registros para mostrar</Alert>
+				)}
+			</CardContent>
+		</Card>
+
+		{modals.showMesaNewModal && (
+			<MesaNewModal
+				onClose={() => {
+					setModals((prevModals) => ({
+						...prevModals,
+						showMesaNewModal: false,
+					}))
+				}}
+				onSaved={() => {
+					setModals((prevModals) => ({
+						...prevModals,
+						showMesaNewModal: false,
+					}))
+					getViewData()
+				}}
+			/>
+		)}
+		{modals.showMesaEditModal && (
+			<MesaEditModal
+				recordId={modals.mesaEditarModal!.id}
+				onClose={() => {
+					setModals((prevModals) => ({
+						...prevModals,
+						showMesaEditModal: false,
+					}))
+				}}
+				onSaved={() => {
+					setModals((prevModals) => ({
+						...prevModals,
+						showMesaEditModal: false,
+					}))
+					getViewData()
+				}}
+			/>
+		)}
+	</>
+)
+}
+
+export default MesasPage
+end::MesasPage.tsx
