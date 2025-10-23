@@ -256,67 +256,6 @@ async function parseAlternativeFormatLiquidacion(text: string, proveedor: string
 }
 
 /**
- * Formato alternativo de parsing para diferentes estructuras de PDF (legacy)
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function parseAlternativeFormat(text: string): TItemLiquidacion[] {
-  const items: TItemLiquidacion[] = []
-  const lines = text.split('\n')
-  
-  for (const line of lines) {
-    // Buscar líneas que contengan números de kardex (8 dígitos seguidos de guión)
-    const kardexMatch = line.match(/(\d{8})\s*[-–]/)
-    if (kardexMatch) {
-      // Extraer todos los números de la línea
-      const numbers = line.match(/\d+(?:[.,]\d+)?/g)
-      if (numbers && numbers.length >= 4) {
-        const item: TItemLiquidacion = {
-          kardex: kardexMatch[1],
-          descripcion: extraerProveedor(line),
-          fecha: formatearFecha(kardexMatch[1]),
-          proveedor: extraerProveedor(line),
-          ruc_dni: numbers[0],
-          ingreso: parseFloat(numbers[numbers.length - 4]?.replace(',', '.') || '0'),
-          salida: parseFloat(numbers[numbers.length - 3]?.replace(',', '.') || '0'),
-          costo_unitario: parseFloat(numbers[numbers.length - 2]?.replace(',', '.') || '0'),
-          total: parseFloat(numbers[numbers.length - 1]?.replace(',', '.') || '0'),
-        }
-        items.push(item)
-      }
-    }
-  }
-  
-  return items
-}
-
-/**
- * Extrae el nombre del proveedor de una línea
- */
-function extraerProveedor(line: string): string {
-  // Remover números y caracteres especiales para obtener el nombre
-  const cleaned = line
-    .replace(/\d{8}\s*[-–]/, '')
-    .replace(/\d+(?:[.,]\d+)?/g, '')
-    .replace(/[^\w\sáéíóúñÁÉÍÓÚÑ]/g, '')
-    .trim()
-  
-  return cleaned || 'DESCONOCIDO'
-}
-
-/**
- * Formatea una fecha desde formato DDMMYY
- */
-function formatearFecha(dateStr: string): string {
-  if (dateStr.length === 8) {
-    const day = dateStr.substring(0, 2)
-    const month = dateStr.substring(2, 4)
-    const year = dateStr.substring(4, 8)
-    return `${day}/${month}/${year}`
-  }
-  return dateStr
-}
-
-/**
  * Procesa un archivo PDF completo
  */
 export async function procesarPDFCompleto(file: File): Promise<TLiquidacion> {

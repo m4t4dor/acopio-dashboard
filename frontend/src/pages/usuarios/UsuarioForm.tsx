@@ -203,7 +203,7 @@ const UsuarioForm = ({ recordId, onSaved }: Props) => {
 							name="rol"
 							control={control}
 							options={[
-								{ label: "Gerencia", value: EUsuarioRolValues.GERENCIA },
+								{ label: "Superadministrador", value: EUsuarioRolValues.SUPERADMINISTRADOR },
 								{ label: "Administrador", value: EUsuarioRolValues.ADMINISTRADOR },
 								{ label: "Supervisor", value: EUsuarioRolValues.SUPERVISOR },
 								{ label: "Asistente", value: EUsuarioRolValues.ASISTENTE },
