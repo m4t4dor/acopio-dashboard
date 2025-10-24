@@ -94,7 +94,7 @@ const LiquidacionesPage = () => {
   }
 
   // Helper para calcular totales de un grupo de liquidaciones
-  const calcularTotalesGrupo = (liquidaciones: TLiquidacion[]) => {
+  /* const calcularTotalesGrupo = (liquidaciones: TLiquidacion[]) => {
     const totalCantidad = liquidaciones.reduce((sum, liq) => sum + calcularCantidadTotal(liq), 0)
     const totalCompra = liquidaciones.reduce((sum, liq) => sum + Number(liq.total_general), 0)
     
@@ -106,7 +106,7 @@ const LiquidacionesPage = () => {
       totalCompra,
       costoPromedioGrupo
     }
-  }
+  } */
 
   // Helper para generar movimientos tipo kardex
   const generarMovimientosKardex = (liquidaciones: TLiquidacion[]) => {
@@ -1331,7 +1331,7 @@ const LiquidacionesPage = () => {
             }
           >
             {liquidacionesAgrupadasPorEmpresa.map((grupo) => {
-              const totalesGrupo = calcularTotalesGrupo(grupo.liquidaciones)
+              /* const totalesGrupo = calcularTotalesGrupo(grupo.liquidaciones) */
               
               // Calcular totales reales del kardex (stock actual)
               const movimientosKardex = generarMovimientosKardex(grupo.liquidaciones)
@@ -1453,26 +1453,7 @@ const LiquidacionesPage = () => {
                           ),
                         },
                       }}
-                      summary={() => (
-                        <Table.Summary.Row className="bg-green-50 font-bold border-t-2 border-green-200">
-                          <Table.Summary.Cell index={0} colSpan={2}>
-                            <span className="text-green-800 font-bold text-xs">TOTALES</span>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={2} align="center">
-                            <span className="font-bold text-xs">{grupo.liquidaciones.reduce((sum, liq) => sum + liq.total_items, 0)}</span>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={3} align="right">
-                            <span className="font-bold text-green-700 text-xs">{totalesGrupo.totalCantidad.toFixed(2)}</span>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={4} align="right">
-                            <span className="font-bold text-xs">S/ {totalesGrupo.costoPromedioGrupo.toFixed(4)}</span>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={5} align="right">
-                            <span className="font-bold text-green-700 text-xs">S/ {totalesGrupo.totalCompra.toFixed(2)}</span>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={6}></Table.Summary.Cell>
-                        </Table.Summary.Row>
-                      )}
+
                     />
                   )}
                 </div>

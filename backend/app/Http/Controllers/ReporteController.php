@@ -15,6 +15,7 @@ class ReporteController extends Controller
     public function reporteVentas(Request $request)
     {
         $request->validate([
+            'empresa_matriz_id' => 'nullable|integer',
             'empresa_ruc' => 'nullable|string',
             'proveedor' => 'nullable|string',
             'fecha_inicio' => 'required|date',
@@ -25,6 +26,29 @@ class ReporteController extends Controller
             ->join('liquidaciones', 'liquidacion_items.liquidacion_id', '=', 'liquidaciones.id')
             ->where('liquidacion_items.salida', '>', 0) // Solo salidas (ventas)
             ->whereBetween(DB::raw('STR_TO_DATE(liquidacion_items.fecha, "%d/%m/%Y")'), [$request->fecha_inicio, $request->fecha_fin]);
+
+        // Filtrar por empresa matriz (RUC de la liquidación)
+        if ($request->empresa_matriz_id) {
+            // Primero intentar obtener el RUC de la tabla empresas
+            $empresaMatriz = DB::table('empresas')->where('id', $request->empresa_matriz_id)->first();
+            
+            if ($empresaMatriz) {
+                $query->where('liquidaciones.numero_documento', $empresaMatriz->ruc);
+            } else {
+                // Si no existe en empresas, obtener el RUC basado en la posición en liquidaciones
+                $liquidacionesUnicas = DB::table('liquidaciones')
+                    ->select('numero_documento')
+                    ->distinct()
+                    ->orderBy('numero_documento')
+                    ->get();
+                
+                // El ID corresponde al índice + 1 en la lista ordenada
+                if (isset($liquidacionesUnicas[$request->empresa_matriz_id - 1])) {
+                    $ruc = $liquidacionesUnicas[$request->empresa_matriz_id - 1]->numero_documento;
+                    $query->where('liquidaciones.numero_documento', $ruc);
+                }
+            }
+        }
 
         // Filtrar por proveedor (cliente final en caso de ventas)
         if ($request->proveedor) {
@@ -74,6 +98,7 @@ class ReporteController extends Controller
     public function reporteCompras(Request $request)
     {
         $request->validate([
+            'empresa_matriz_id' => 'nullable|integer',
             'empresa_ruc' => 'nullable|string',
             'proveedor' => 'nullable|string',
             'fecha_inicio' => 'required|date',
@@ -84,6 +109,29 @@ class ReporteController extends Controller
             ->join('liquidaciones', 'liquidacion_items.liquidacion_id', '=', 'liquidaciones.id')
             ->where('liquidacion_items.ingreso', '>', 0) // Solo ingresos (compras)
             ->whereBetween(DB::raw('STR_TO_DATE(liquidacion_items.fecha, "%d/%m/%Y")'), [$request->fecha_inicio, $request->fecha_fin]);
+
+        // Filtrar por empresa matriz (RUC de la liquidación)
+        if ($request->empresa_matriz_id) {
+            // Primero intentar obtener el RUC de la tabla empresas
+            $empresaMatriz = DB::table('empresas')->where('id', $request->empresa_matriz_id)->first();
+            
+            if ($empresaMatriz) {
+                $query->where('liquidaciones.numero_documento', $empresaMatriz->ruc);
+            } else {
+                // Si no existe en empresas, obtener el RUC basado en la posición en liquidaciones
+                $liquidacionesUnicas = DB::table('liquidaciones')
+                    ->select('numero_documento')
+                    ->distinct()
+                    ->orderBy('numero_documento')
+                    ->get();
+                
+                // El ID corresponde al índice + 1 en la lista ordenada
+                if (isset($liquidacionesUnicas[$request->empresa_matriz_id - 1])) {
+                    $ruc = $liquidacionesUnicas[$request->empresa_matriz_id - 1]->numero_documento;
+                    $query->where('liquidaciones.numero_documento', $ruc);
+                }
+            }
+        }
 
         // Filtrar por nombre de proveedor
         if ($request->proveedor) {
@@ -132,6 +180,7 @@ class ReporteController extends Controller
     public function comportamientoPrecios(Request $request)
     {
         $request->validate([
+            'empresa_matriz_id' => 'nullable|integer',
             'kardex' => 'nullable|string',
             'anio' => 'required|integer|min:2020|max:2100',
             'mes_inicio' => 'nullable|integer|min:1|max:12',
@@ -139,30 +188,54 @@ class ReporteController extends Controller
         ]);
 
         $query = DB::table('liquidacion_items')
+            ->join('liquidaciones', 'liquidacion_items.liquidacion_id', '=', 'liquidaciones.id')
             ->select(
-                DB::raw('YEAR(STR_TO_DATE(fecha, "%d/%m/%Y")) as anio'),
-                DB::raw('MONTH(STR_TO_DATE(fecha, "%d/%m/%Y")) as mes'),
-                'kardex',
-                'descripcion',
-                DB::raw('AVG(CASE WHEN ingreso > 0 THEN costo_unitario ELSE NULL END) as precio_compra_promedio'),
-                DB::raw('AVG(CASE WHEN salida > 0 THEN costo_unitario ELSE NULL END) as precio_venta_promedio'),
-                DB::raw('SUM(ingreso) as cantidad_comprada'),
-                DB::raw('SUM(salida) as cantidad_vendida')
+                DB::raw('YEAR(STR_TO_DATE(liquidacion_items.fecha, "%d/%m/%Y")) as anio'),
+                DB::raw('MONTH(STR_TO_DATE(liquidacion_items.fecha, "%d/%m/%Y")) as mes'),
+                'liquidacion_items.kardex',
+                'liquidacion_items.descripcion',
+                DB::raw('AVG(CASE WHEN liquidacion_items.ingreso > 0 THEN liquidacion_items.costo_unitario ELSE NULL END) as precio_compra_promedio'),
+                DB::raw('AVG(CASE WHEN liquidacion_items.salida > 0 THEN liquidacion_items.costo_unitario ELSE NULL END) as precio_venta_promedio'),
+                DB::raw('SUM(liquidacion_items.ingreso) as cantidad_comprada'),
+                DB::raw('SUM(liquidacion_items.salida) as cantidad_vendida')
             )
-            ->whereRaw('YEAR(STR_TO_DATE(fecha, "%d/%m/%Y")) = ?', [$request->anio]);
+            ->whereRaw('YEAR(STR_TO_DATE(liquidacion_items.fecha, "%d/%m/%Y")) = ?', [$request->anio]);
+
+        // Filtrar por empresa matriz (RUC de la liquidación)
+        if ($request->empresa_matriz_id) {
+            // Primero intentar obtener el RUC de la tabla empresas
+            $empresaMatriz = DB::table('empresas')->where('id', $request->empresa_matriz_id)->first();
+            
+            if ($empresaMatriz) {
+                $query->where('liquidaciones.numero_documento', $empresaMatriz->ruc);
+            } else {
+                // Si no existe en empresas, obtener el RUC basado en la posición en liquidaciones
+                $liquidacionesUnicas = DB::table('liquidaciones')
+                    ->select('numero_documento')
+                    ->distinct()
+                    ->orderBy('numero_documento')
+                    ->get();
+                
+                // El ID corresponde al índice + 1 en la lista ordenada
+                if (isset($liquidacionesUnicas[$request->empresa_matriz_id - 1])) {
+                    $ruc = $liquidacionesUnicas[$request->empresa_matriz_id - 1]->numero_documento;
+                    $query->where('liquidaciones.numero_documento', $ruc);
+                }
+            }
+        }
 
         if ($request->kardex) {
-            $query->where('kardex', $request->kardex);
+            $query->where('liquidacion_items.kardex', $request->kardex);
         }
 
         if ($request->mes_inicio && $request->mes_fin) {
-            $query->whereRaw('MONTH(STR_TO_DATE(fecha, "%d/%m/%Y")) BETWEEN ? AND ?', [$request->mes_inicio, $request->mes_fin]);
+            $query->whereRaw('MONTH(STR_TO_DATE(liquidacion_items.fecha, "%d/%m/%Y")) BETWEEN ? AND ?', [$request->mes_inicio, $request->mes_fin]);
         }
 
-        $datos = $query->groupBy('anio', 'mes', 'kardex', 'descripcion')
+        $datos = $query->groupBy('anio', 'mes', 'liquidacion_items.kardex', 'liquidacion_items.descripcion')
             ->orderBy('anio', 'desc')
             ->orderBy('mes', 'desc')
-            ->orderBy('kardex')
+            ->orderBy('liquidacion_items.kardex')
             ->get();
 
         // Calcular variaciones respecto al mes anterior
@@ -279,11 +352,48 @@ class ReporteController extends Controller
      */
     public function getEmpresasMatriz()
     {
-        $empresas = DB::table('empresas')
-            ->select('id', 'nombre', 'ruc')
-            ->orderBy('nombre')
+        // Primero intentar obtener empresas de la tabla empresas que coincidan con liquidaciones
+        $empresasConNombre = DB::table('liquidaciones')
+            ->join('empresas', 'liquidaciones.numero_documento', '=', 'empresas.ruc')
+            ->select('empresas.id', 'empresas.nombre', 'empresas.ruc')
+            ->distinct()
             ->get();
 
-        return response()->json(['content' => $empresas]);
+        // Obtener todos los RUCs únicos de liquidaciones
+        $rucsDeLiquidaciones = DB::table('liquidaciones')
+            ->select('numero_documento')
+            ->distinct()
+            ->pluck('numero_documento');
+
+        // Crear una lista completa, usando nombres de la tabla empresas cuando estén disponibles
+        $empresasCompletas = [];
+        $idCounter = 1;
+
+        foreach ($rucsDeLiquidaciones as $ruc) {
+            // Buscar si existe en la tabla empresas
+            $empresaConNombre = $empresasConNombre->firstWhere('ruc', $ruc);
+            
+            if ($empresaConNombre) {
+                $empresasCompletas[] = [
+                    'id' => $empresaConNombre->id,
+                    'nombre' => $empresaConNombre->nombre,
+                    'ruc' => $empresaConNombre->ruc
+                ];
+            } else {
+                // Si no existe en empresas, crear una entrada temporal
+                $empresasCompletas[] = [
+                    'id' => $idCounter++,
+                    'nombre' => "Empresa RUC: {$ruc}",
+                    'ruc' => $ruc
+                ];
+            }
+        }
+
+        // Ordenar por nombre
+        usort($empresasCompletas, function($a, $b) {
+            return strcmp($a['nombre'], $b['nombre']);
+        });
+
+        return response()->json(['content' => $empresasCompletas]);
     }
 }

@@ -58,10 +58,23 @@ const ReporteComprasPage = () => {
   const handleGenerarReporte = async (values: any) => {
     setCargando(true)
     try {
-      const filtros = {
+      let filtros: any = {
+        empresa_matriz_id: values.empresa_matriz_id,
         empresa_ruc: values.empresa_ruc,
-        fecha_inicio: values.rango_fechas[0].format("YYYY-MM-DD"),
-        fecha_fin: values.rango_fechas[1].format("YYYY-MM-DD"),
+      }
+
+      // Determinar fechas según el tipo de período seleccionado
+      if (values.tipo_periodo === 'mes_especifico') {
+        const mesSeleccionado = dayjs(values.mes_especifico)
+        filtros.fecha_inicio = mesSeleccionado.startOf('month').format("YYYY-MM-DD")
+        filtros.fecha_fin = mesSeleccionado.endOf('month').format("YYYY-MM-DD")
+      } else if (values.tipo_periodo === 'periodo_completo') {
+        // Período completo desde el inicio de los registros hasta hoy
+        filtros.fecha_inicio = "2020-01-01" // Fecha muy antigua para incluir todos los registros
+        filtros.fecha_fin = dayjs().format("YYYY-MM-DD")
+      } else if (values.tipo_periodo === 'rango_personalizado') {
+        filtros.fecha_inicio = values.rango_fechas[0].format("YYYY-MM-DD")
+        filtros.fecha_fin = values.rango_fechas[1].format("YYYY-MM-DD")
       }
 
       const response = await reporteService.getReporteCompras(filtros)
@@ -95,6 +108,8 @@ const ReporteComprasPage = () => {
       Fecha: item.fecha,
       Kardex: item.kardex,
       Descripción: item.descripcion,
+      Proveedor: item.proveedor,
+      "RUC/DNI": item.ruc_dni,
       Cantidad: item.cantidad,
       "Precio Unitario": item.precio_unitario,
       Total: item.total,
@@ -105,6 +120,8 @@ const ReporteComprasPage = () => {
       Fecha: "",
       Kardex: "",
       Descripción: "TOTAL",
+      Proveedor: "",
+      "RUC/DNI": "",
       Cantidad: reporte.cantidad_total,
       "Precio Unitario": "",
       Total: reporte.monto_total,
@@ -139,6 +156,29 @@ const ReporteComprasPage = () => {
       dataIndex: "descripcion",
       key: "descripcion",
       ellipsis: true,
+    },
+    {
+      title: "Proveedor",
+      dataIndex: "proveedor",
+      key: "proveedor",
+      width: 200,
+      ellipsis: true,
+      render: (text) => (
+        <span className="text-sm font-medium text-gray-700" title={text}>
+          {text}
+        </span>
+      ),
+    },
+    {
+      title: "RUC/DNI",
+      dataIndex: "ruc_dni",
+      key: "ruc_dni",
+      width: 120,
+      render: (text) => (
+        <span className="text-xs font-mono text-gray-600" title={text}>
+          {text}
+        </span>
+      ),
     },
     {
       title: "Cantidad",
@@ -184,10 +224,12 @@ const ReporteComprasPage = () => {
           layout="vertical"
           onFinish={handleGenerarReporte}
           initialValues={{
+            tipo_periodo: 'mes_especifico',
+            mes_especifico: dayjs().startOf('month'),
             rango_fechas: [dayjs().startOf("month"), dayjs()],
           }}
         >
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <Form.Item
               label="Empresa Matriz"
               name="empresa_matriz_id"
@@ -219,15 +261,70 @@ const ReporteComprasPage = () => {
             </Form.Item>
 
             <Form.Item
-              label="Periodo"
-              name="rango_fechas"
-              rules={[{ required: true, message: "Selecciona el periodo" }]}
+              label="Tipo de Período"
+              name="tipo_periodo"
+              rules={[{ required: true, message: "Selecciona el tipo de período" }]}
             >
-              <RangePicker
-                format="DD/MM/YYYY"
-                className="w-full"
-                placeholder={["Fecha inicio", "Fecha fin"]}
+              <Select
+                options={[
+                  { label: 'Mes Específico', value: 'mes_especifico' },
+                  { label: 'Período Completo', value: 'periodo_completo' },
+                  { label: 'Rango Personalizado', value: 'rango_personalizado' },
+                ]}
               />
+            </Form.Item>
+
+            <Form.Item
+              noStyle
+              shouldUpdate={(prevValues, currentValues) => 
+                prevValues.tipo_periodo !== currentValues.tipo_periodo
+              }
+            >
+              {({ getFieldValue }) => {
+                const tipoPeriodo = getFieldValue('tipo_periodo')
+                
+                if (tipoPeriodo === 'mes_especifico') {
+                  return (
+                    <Form.Item
+                      label="Mes"
+                      name="mes_especifico"
+                      rules={[{ required: true, message: "Selecciona el mes" }]}
+                    >
+                      <DatePicker
+                        picker="month"
+                        format="MM/YYYY"
+                        className="w-full"
+                        placeholder="Seleccionar mes"
+                      />
+                    </Form.Item>
+                  )
+                } else if (tipoPeriodo === 'rango_personalizado') {
+                  return (
+                    <Form.Item
+                      label="Período"
+                      name="rango_fechas"
+                      rules={[{ required: true, message: "Selecciona el período" }]}
+                    >
+                      <RangePicker
+                        format="DD/MM/YYYY"
+                        className="w-full"
+                        placeholder={["Fecha inicio", "Fecha fin"]}
+                      />
+                    </Form.Item>
+                  )
+                } else if (tipoPeriodo === 'periodo_completo') {
+                  return (
+                    <Form.Item label="Período">
+                      <div className="text-center py-2 px-3 bg-green-50 border border-green-200 rounded">
+                        <span className="text-green-700 font-medium">
+                          Desde el inicio hasta hoy
+                        </span>
+                      </div>
+                    </Form.Item>
+                  )
+                }
+                return null
+              }}
             </Form.Item>
 
             <Form.Item label=" " className="mb-0">
@@ -302,7 +399,7 @@ const ReporteComprasPage = () => {
           {/* Tabla de detalles */}
           <Card title={`Detalle de Compras (${reporte.items.length} registros)`}>
             {reporte.items.length > 0 ? (
-              <Table
+                <Table
                 columns={columnas}
                 dataSource={reporte.items}
                 rowKey={(record, index) => `${record.kardex}-${index}`}
@@ -311,7 +408,7 @@ const ReporteComprasPage = () => {
                   showSizeChanger: true,
                   showTotal: (total) => `Total ${total} registros`,
                 }}
-                scroll={{ x: 1000 }}
+                scroll={{ x: 1200 }}
                 summary={(pageData) => {
                   const totalCantidad = pageData.reduce(
                     (sum, item) => sum + Number(item.cantidad || 0),

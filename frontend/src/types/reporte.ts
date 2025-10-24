@@ -14,6 +14,8 @@ export type TDetalleVenta = {
   fecha: string
   kardex: string
   descripcion: string
+  proveedor: string
+  ruc_dni: string
   cantidad: number
   precio_unitario: number
   total: number
@@ -33,6 +35,8 @@ export type TDetalleCompra = {
   fecha: string
   kardex: string
   descripcion: string
+  proveedor: string
+  ruc_dni: string
   cantidad: number
   precio_unitario: number
   total: number
@@ -52,18 +56,21 @@ export type TComportamientoPrecios = {
 }
 
 export type TFiltrosReporteVentas = {
+  empresa_matriz_id?: number
   empresa_ruc?: string
   fecha_inicio: string
   fecha_fin: string
 }
 
 export type TFiltrosReporteCompras = {
+  empresa_matriz_id?: number
   empresa_ruc?: string
   fecha_inicio: string
   fecha_fin: string
 }
 
 export type TFiltrosComportamientoPrecios = {
+  empresa_matriz_id?: number
   kardex?: string
   anio?: number
   mes_inicio?: number

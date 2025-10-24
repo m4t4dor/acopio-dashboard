@@ -42,20 +42,30 @@ const mesesDelAnio = [
 const ComportamientoPreciosPage = () => {
   const [cargando, setCargando] = useState(false)
   const [datos, setDatos] = useState<TComportamientoPrecios[]>([])
+  const [empresasMatriz, setEmpresasMatriz] = useState<Array<{ id: number; nombre: string; ruc: string }>>([])
   const [kardexList, setKardexList] = useState<Array<{ kardex: string; descripcion: string }>>([])
   const [form] = Form.useForm()
 
   useEffect(() => {
-    cargarKardexList()
+    cargarDatosIniciales()
   }, [])
 
-  const cargarKardexList = async () => {
+  const cargarDatosIniciales = async () => {
     try {
-      const response = await reporteService.getKardexList()
-      setKardexList(response.data.content)
+      const [empresasMatrizRes, kardexRes] = await Promise.all([
+        reporteService.getEmpresasMatriz(),
+        reporteService.getKardexList(),
+      ])
+      setEmpresasMatriz(empresasMatrizRes.data.content)
+      setKardexList(kardexRes.data.content)
+      
+      // Establecer la primera empresa matriz por defecto
+      if (empresasMatrizRes.data.content.length > 0) {
+        form.setFieldValue('empresa_matriz_id', empresasMatrizRes.data.content[0].id)
+      }
     } catch (error) {
-      console.error("Error cargando lista de kardex:", error)
-      toast.error("Error al cargar la lista de kardex")
+      console.error("Error cargando datos iniciales:", error)
+      toast.error("Error al cargar los datos iniciales")
     }
   }
 
@@ -63,6 +73,7 @@ const ComportamientoPreciosPage = () => {
     setCargando(true)
     try {
       const filtros = {
+        empresa_matriz_id: values.empresa_matriz_id,
         kardex: values.kardex,
         anio: values.anio,
         mes_inicio: values.mes_inicio,
@@ -96,18 +107,25 @@ const ComportamientoPreciosPage = () => {
       return
     }
 
-    const datosExportar = datos.map((item) => ({
-      Año: item.anio,
-      Mes: mesesDelAnio.find(m => m.value === item.mes)?.label || item.mes,
-      Kardex: item.kardex,
-      Descripción: item.descripcion,
-      "Precio Compra Prom.": item.precio_compra_promedio,
-      "Precio Venta Prom.": item.precio_venta_promedio,
-      "Cantidad Comprada": item.cantidad_comprada,
-      "Cantidad Vendida": item.cantidad_vendida,
-      "Variación Compra %": item.variacion_compra,
-      "Variación Venta %": item.variacion_venta,
-    }))
+    const datosExportar = datos.map((item) => {
+      const compra = Number(item.precio_compra_promedio)
+      const venta = Number(item.precio_venta_promedio)
+      const margen = (compra > 0 && venta > 0) ? ((venta - compra) / compra) * 100 : 0
+      
+      return {
+        Año: item.anio,
+        Mes: mesesDelAnio.find(m => m.value === item.mes)?.label || item.mes,
+        Kardex: item.kardex,
+        Descripción: item.descripcion,
+        "Precio Compra Prom.": compra > 0 ? compra.toFixed(2) : '-',
+        "Precio Venta Prom.": venta > 0 ? venta.toFixed(2) : '-',
+        "Margen %": compra > 0 && venta > 0 ? margen.toFixed(1) : '-',
+        "Cantidad Comprada": Number(item.cantidad_comprada).toFixed(2),
+        "Cantidad Vendida": Number(item.cantidad_vendida).toFixed(2),
+        "Variación Compra %": Number(item.variacion_compra).toFixed(2),
+        "Variación Venta %": Number(item.variacion_venta).toFixed(2),
+      }
+    })
 
     const ws = XLSX.utils.json_to_sheet(datosExportar)
     const wb = XLSX.utils.book_new()
@@ -151,6 +169,7 @@ const ComportamientoPreciosPage = () => {
       dataIndex: "descripcion",
       key: "descripcion",
       ellipsis: true,
+      width: 200,
     },
     {
       title: "Precio Compra Prom.",
@@ -160,7 +179,7 @@ const ComportamientoPreciosPage = () => {
       width: 160,
       render: (value) => (
         <span className="text-orange-600 font-semibold">
-          S/ {Number(value).toFixed(2)}
+          {value > 0 ? `S/ ${Number(value).toFixed(2)}` : '-'}
         </span>
       ),
     },
@@ -172,9 +191,28 @@ const ComportamientoPreciosPage = () => {
       width: 160,
       render: (value) => (
         <span className="text-green-600 font-semibold">
-          S/ {Number(value).toFixed(2)}
+          {value > 0 ? `S/ ${Number(value).toFixed(2)}` : '-'}
         </span>
       ),
+    },
+    {
+      title: "Margen",
+      key: "margen",
+      align: "right",
+      width: 120,
+      render: (_, record) => {
+        const compra = Number(record.precio_compra_promedio)
+        const venta = Number(record.precio_venta_promedio)
+        if (compra > 0 && venta > 0) {
+          const margen = ((venta - compra) / compra) * 100
+          return (
+            <span className={`font-semibold ${margen > 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {margen > 0 ? '+' : ''}{margen.toFixed(1)}%
+            </span>
+          )
+        }
+        return '-'
+      },
     },
     {
       title: "Cant. Comprada",
@@ -182,6 +220,7 @@ const ComportamientoPreciosPage = () => {
       key: "cantidad_comprada",
       align: "right",
       width: 130,
+      render: (value) => Number(value).toFixed(2),
     },
     {
       title: "Cant. Vendida",
@@ -189,6 +228,7 @@ const ComportamientoPreciosPage = () => {
       key: "cantidad_vendida",
       align: "right",
       width: 130,
+      render: (value) => Number(value).toFixed(2),
     },
     {
       title: "Var. Compra",
@@ -263,7 +303,21 @@ const ComportamientoPreciosPage = () => {
             anio: dayjs().year(),
           }}
         >
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+            <Form.Item
+              label="Empresa Matriz"
+              name="empresa_matriz_id"
+              rules={[{ required: true, message: "Selecciona la empresa" }]}
+            >
+              <Select
+                placeholder="Seleccionar empresa"
+                options={empresasMatriz.map((emp) => ({
+                  label: emp.nombre,
+                  value: emp.id,
+                }))}
+              />
+            </Form.Item>
+
             <Form.Item label="Kardex" name="kardex">
               <Select
                 placeholder="Todos los kardex"
@@ -343,7 +397,7 @@ const ComportamientoPreciosPage = () => {
       {!cargando && datos.length > 0 && (
         <Card title={`Comportamiento de Precios (${datos.length} registros)`}>
           <div className="mb-4 p-4 bg-blue-50 rounded border border-blue-200">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
               <div>
                 <span className="text-gray-600">ℹ️ Variación Compra:</span>
                 <p className="mt-1">
@@ -356,6 +410,13 @@ const ComportamientoPreciosPage = () => {
                 <p className="mt-1">
                   <Tag color="green" icon={<ArrowUpOutlined />}>Aumento</Tag>
                   <Tag color="red" icon={<ArrowDownOutlined />}>Disminución</Tag>
+                </p>
+              </div>
+              <div>
+                <span className="text-gray-600">💰 Margen:</span>
+                <p className="mt-1 text-xs">
+                  <span className="text-green-600">Positivo</span> = Ganancia<br/>
+                  <span className="text-red-600">Negativo</span> = Pérdida
                 </p>
               </div>
               <div>
@@ -376,7 +437,7 @@ const ComportamientoPreciosPage = () => {
               showSizeChanger: true,
               showTotal: (total) => `Total ${total} registros`,
             }}
-            scroll={{ x: 1400 }}
+            scroll={{ x: 1500 }}
           />
         </Card>
       )}
