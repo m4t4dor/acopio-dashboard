@@ -70,6 +70,34 @@ const LiquidacionesPage = () => {
   // Estados para filtros
   const [filtroDocumento, setFiltroDocumento] = useState<string>("")
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>("")
+  const [filtroKardexVista, setFiltroKardexVista] = useState<string>("")
+
+  // Helper para obtener kardex únicos de una liquidación
+  const obtenerKardexDeLiquidacion = (liquidacion: TLiquidacion): string[] => {
+    const kardexSet = new Set<string>()
+    liquidacion.items.forEach(item => {
+      kardexSet.add(item.kardex)
+    })
+    return Array.from(kardexSet).sort()
+  }
+
+  // Helper para obtener kardex únicos de un grupo de liquidaciones
+  const obtenerKardexUnicos = (liquidaciones: TLiquidacion[]): string[] => {
+    const kardexSet = new Set<string>()
+    // console.log('🔍 ANALIZANDO KARDEX ÚNICOS para liquidaciones:', liquidaciones.length)
+    
+    liquidaciones.forEach((liq) => {
+      // console.log(`  Liquidación (ID: ${liq.id}, RUC: ${liq.numero_documento}):`)
+      liq.items.forEach((item) => {
+        // console.log(`    Item: kardex="${item.kardex}" (${typeof item.kardex})`)
+        kardexSet.add(item.kardex)
+      })
+    })
+    
+    const resultado = Array.from(kardexSet).sort()
+    // console.log('🎯 Kardex únicos encontrados:', resultado)
+    return resultado
+  }
 
   // Helper para obtener la fecha del documento de los items
   const obtenerFechaDocumento = (liquidacion: TLiquidacion): string => {
@@ -108,13 +136,10 @@ const LiquidacionesPage = () => {
     }
   } */
 
-  // Helper para generar movimientos tipo kardex
-  const generarMovimientosKardex = (liquidaciones: TLiquidacion[]) => {
+  // Helper para generar movimientos tipo kardex agrupados por kardex
+  const generarMovimientosKardex = (liquidaciones: TLiquidacion[], kardexFiltro?: string) => {
     const movimientos: any[] = []
-    let stockAcumulado = 0
-    let valorInventario = 0
-    let costoPromedioPonderado = 0
-
+    
     // Obtener todos los items de todas las liquidaciones
     const todosLosItems = liquidaciones.flatMap(liq => 
       liq.items.map(item => ({
@@ -124,60 +149,118 @@ const LiquidacionesPage = () => {
       }))
     )
 
-    // NO agrupar - cada item es un movimiento separado
-    const itemsOrdenados = todosLosItems.sort((a, b) => {
-      // Ordenar por fecha primero, luego por id para mantener consistencia
-      if (a.fecha !== b.fecha) {
-        return a.fecha.localeCompare(b.fecha)
+    // Agrupar items por kardex
+    const itemsPorKardex = new Map<string, any[]>()
+    
+    todosLosItems.forEach(item => {
+      // Si hay filtro por kardex, solo incluir ese kardex
+      if (kardexFiltro && item.kardex !== kardexFiltro) {
+        return
       }
-      return (a.id || 0) - (b.id || 0)
+      
+      if (!itemsPorKardex.has(item.kardex)) {
+        itemsPorKardex.set(item.kardex, [])
+      }
+      itemsPorKardex.get(item.kardex)!.push(item)
     })
 
-    // Procesar cada item individual como un movimiento
-    itemsOrdenados.forEach((item, index) => {
-      const cantidadIngreso = Number(item.ingreso) || 0
-      const cantidadSalida = Number(item.salida) || 0
-      const costoUnitario = Number(item.costo_unitario) || 0
-      const totalItem = Number(item.total) || 0
+    // Procesar cada kardex por separado, ordenado por kardex para consistencia
+    const kardexOrdenados = Array.from(itemsPorKardex.keys()).sort()
+    
+    // Debug: Mostrar kardex encontrados (comentado para producción)
+    // console.log('🔍 Kardex encontrados:', kardexOrdenados, 'Items por kardex:', Object.fromEntries(itemsPorKardex.entries().map(([k, v]) => [k, v.length])))
+    
+    kardexOrdenados.forEach((kardex) => {
+      const items = itemsPorKardex.get(kardex)!
+      let stockAcumulado = 0
+      let valorInventario = 0
+      let costoPromedioPonderado = 0
 
-      // Procesar ingresos
-      if (cantidadIngreso > 0) {
-        const nuevoValorInventario = valorInventario + (cantidadIngreso * costoUnitario)
-        const nuevoStock = stockAcumulado + cantidadIngreso
-        costoPromedioPonderado = nuevoStock > 0 ? nuevoValorInventario / nuevoStock : 0
+      // Ordenar items de este kardex por fecha (convertir DD/MM/YYYY a formato comparable)
+      const itemsOrdenados = items.sort((a, b) => {
+        // Convertir fechas DD/MM/YYYY a YYYY-MM-DD para comparación correcta
+        const fechaA = a.fecha.split('/').reverse().join('-') // DD/MM/YYYY -> YYYY-MM-DD
+        const fechaB = b.fecha.split('/').reverse().join('-') // DD/MM/YYYY -> YYYY-MM-DD
         
-        stockAcumulado = nuevoStock
-        valorInventario = nuevoValorInventario
+        if (fechaA !== fechaB) {
+          return fechaA.localeCompare(fechaB)
+        }
+        return (a.id || 0) - (b.id || 0)
+      })
+
+      // Agregar separador de kardex si hay múltiples kardex
+      if (itemsPorKardex.size > 1 && !kardexFiltro) {
+        movimientos.push({
+          key: `separator-${kardex}`,
+          esDescansoKardex: true,
+          kardex: kardex,
+          descripcion: items[0]?.descripcion || `Producto ${kardex}`,
+          fecha: '',
+          archivo: '',
+          proveedor: '',
+          cantidadIngreso: 0,
+          costoIngreso: 0,
+          totalIngreso: 0,
+          cantidadSalida: 0,
+          costoSalida: 0,
+          totalSalida: 0,
+          stockActual: 0,
+          costoPromedio: 0,
+          valorStock: 0,
+          tipo: 'separador',
+          esCorte: false,
+          index: -1
+        })
       }
 
-      // Procesar salidas
-      if (cantidadSalida > 0) {
-        stockAcumulado -= cantidadSalida
-        valorInventario = stockAcumulado * costoPromedioPonderado
-      }
+      // Procesar cada item individual como un movimiento
+      itemsOrdenados.forEach((item, index) => {
+        const cantidadIngreso = Number(item.ingreso) || 0
+        const cantidadSalida = Number(item.salida) || 0
+        const costoUnitario = Number(item.costo_unitario) || 0
+        const totalItem = Number(item.total) || 0
 
-      movimientos.push({
-        key: `${item.fecha}-${item.kardex}-${item.id}`,
-        fecha: item.fecha,
-        archivo: item.archivo,
-        descripcion: item.descripcion,
-        proveedor: item.proveedor,
-        // Ingreso
-        cantidadIngreso: cantidadIngreso,
-        costoIngreso: costoUnitario,
-        totalIngreso: totalItem,
-        // Salida
-        cantidadSalida: cantidadSalida,
-        costoSalida: costoPromedioPonderado,
-        totalSalida: cantidadSalida * costoPromedioPonderado,
-        // Stock
-        stockActual: stockAcumulado,
-        costoPromedio: costoPromedioPonderado,
-        valorStock: valorInventario,
-        // Metadata
-        tipo: cantidadIngreso > 0 ? 'ingreso' : 'salida',
-        esCorte: cantidadSalida > 0,
-        index
+        // Procesar ingresos
+        if (cantidadIngreso > 0) {
+          const nuevoValorInventario = valorInventario + (cantidadIngreso * costoUnitario)
+          const nuevoStock = stockAcumulado + cantidadIngreso
+          costoPromedioPonderado = nuevoStock > 0 ? nuevoValorInventario / nuevoStock : 0
+          
+          stockAcumulado = nuevoStock
+          valorInventario = nuevoValorInventario
+        }
+
+        // Procesar salidas
+        if (cantidadSalida > 0) {
+          stockAcumulado -= cantidadSalida
+          valorInventario = stockAcumulado * costoPromedioPonderado
+        }
+
+        movimientos.push({
+          key: `${item.fecha}-${item.kardex}-${item.id}`,
+          kardex: item.kardex,
+          fecha: item.fecha,
+          archivo: item.archivo,
+          descripcion: item.descripcion,
+          proveedor: item.proveedor,
+          // Ingreso
+          cantidadIngreso: cantidadIngreso,
+          costoIngreso: costoUnitario,
+          totalIngreso: totalItem,
+          // Salida
+          cantidadSalida: cantidadSalida,
+          costoSalida: costoPromedioPonderado,
+          totalSalida: cantidadSalida * costoPromedioPonderado,
+          // Stock
+          stockActual: stockAcumulado,
+          costoPromedio: costoPromedioPonderado,
+          valorStock: valorInventario,
+          // Metadata
+          tipo: cantidadIngreso > 0 ? 'ingreso' : 'salida',
+          esCorte: cantidadSalida > 0,
+          esDescansoKardex: false,
+          index
+        })
       })
     })
 
@@ -286,6 +369,25 @@ const LiquidacionesPage = () => {
     try {
       const response = await liquidacionService.getLiquidaciones()
       const data = response.data.content
+      
+      // Debug: Analizar todos los kardex en crudo (comentado para producción)
+      // console.log('📊 ANÁLISIS COMPLETO DE LIQUIDACIONES:')
+      // data.forEach((liq, index) => {
+      //   console.log(`Liquidación ${index + 1}:`, {
+      //     id: liq.id,
+      //     ruc: liq.numero_documento,
+      //     archivo: liq.nombre_archivo,
+      //     total_items: liq.total_items,
+      //     items_kardex: liq.items.map(item => ({
+      //       id: item.id,
+      //       kardex: item.kardex,
+      //       kardex_type: typeof item.kardex,
+      //       descripcion: item.descripcion,
+      //       fecha: item.fecha
+      //     }))
+      //   })
+      // })
+      
       // Ordenar los items de cada liquidación
       const liquidacionesOrdenadas = data.map(liq => ({
         ...liq,
@@ -1015,16 +1117,42 @@ const LiquidacionesPage = () => {
       key: "nombre_archivo",
       width: "25%",
       minWidth: 200,
-      render: (text) => (
-        <div className="flex items-center gap-2">
-          <FileTextOutlined className="text-blue-500" />
-          <Tooltip title={text}>
-            <span className="text-xs font-medium truncate">
-              {text?.length > 30 ? `${text.substring(0, 30)}...` : text}
-            </span>
-          </Tooltip>
-        </div>
-      ),
+      render: (text, record) => {
+        const kardexDeLiquidacion = obtenerKardexDeLiquidacion(record)
+        const esMultiKardex = kardexDeLiquidacion.length > 1
+        
+        return (
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <FileTextOutlined className="text-blue-500" />
+              <Tooltip title={text}>
+                <span className="text-xs font-medium truncate">
+                  {text?.length > 30 ? `${text.substring(0, 30)}...` : text}
+                </span>
+              </Tooltip>
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              {kardexDeLiquidacion.map(kardex => (
+                <span 
+                  key={kardex} 
+                  className={`text-xs px-1.5 py-0.5 rounded ${
+                    esMultiKardex 
+                      ? 'bg-orange-100 text-orange-700 border border-orange-200' 
+                      : 'bg-blue-100 text-blue-700 border border-blue-200'
+                  }`}
+                >
+                  K{kardex}
+                </span>
+              ))}
+              {esMultiKardex && (
+                <Tooltip title="Esta liquidación contiene múltiples productos (kardex)">
+                  <span className="text-xs text-orange-600 font-medium">MIXTA</span>
+                </Tooltip>
+              )}
+            </div>
+          </div>
+        )
+      },
       ellipsis: true,
     },
     {
@@ -1107,11 +1235,28 @@ const LiquidacionesPage = () => {
   // Columnas para la tabla tipo kardex
   const columnasKardex = [
     {
+      title: "Kardex",
+      dataIndex: "kardex",
+      key: "kardex",
+      width: "8%",
+      render: (kardex: string, record: any) => {
+        if (record.esDescansoKardex) {
+          return <span className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-1 rounded">{kardex}</span>
+        }
+        return <span className="text-xs font-medium text-gray-600">{kardex}</span>
+      },
+    },
+    {
       title: "Fecha",
       dataIndex: "fecha",
       key: "fecha",
-      width: "12%",
-      render: (fecha: string) => <span className="text-xs font-medium">{fecha}</span>,
+      width: "10%",
+      render: (fecha: string, record: any) => {
+        if (record.esDescansoKardex) {
+          return <span className="text-xs font-bold text-blue-700">{record.descripcion}</span>
+        }
+        return <span className="text-xs font-medium">{fecha}</span>
+      },
     },
     {
       title: "INGRESO",
@@ -1120,25 +1265,34 @@ const LiquidacionesPage = () => {
           title: "CANT",
           dataIndex: "cantidadIngreso",
           key: "cantidadIngreso",
-          width: "9%",
+          width: "8%",
           align: "right" as const,
-          render: (val: number) => (val && val > 0) ? <span className="text-xs text-blue-600">{val.toFixed(2)}</span> : "",
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return (val && val > 0) ? <span className="text-xs text-blue-600">{val.toFixed(2)}</span> : ""
+          },
         },
         {
           title: "P.UNIT",
           dataIndex: "costoIngreso",
           key: "costoIngreso",
-          width: "10%",
+          width: "9%",
           align: "right" as const,
-          render: (val: number) => (val && val > 0) ? <span className="text-xs">{val.toFixed(2)}</span> : "",
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return (val && val > 0) ? <span className="text-xs">{val.toFixed(2)}</span> : ""
+          },
         },
         {
           title: "TOTAL",
           dataIndex: "totalIngreso",
           key: "totalIngreso",
-          width: "11%",
+          width: "10%",
           align: "right" as const,
-          render: (val: number) => (val && val > 0) ? <span className="text-xs text-green-600">{val.toFixed(2)}</span> : "",
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return (val && val > 0) ? <span className="text-xs text-green-600">{val.toFixed(2)}</span> : ""
+          },
         },
       ],
     },
@@ -1149,25 +1303,34 @@ const LiquidacionesPage = () => {
           title: "CANT",
           dataIndex: "cantidadSalida",
           key: "cantidadSalida",
-          width: "9%",
+          width: "8%",
           align: "right" as const,
-          render: (val: number) => val > 0 ? <span className="text-xs text-red-600">{val.toFixed(2)}</span> : "",
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return val > 0 ? <span className="text-xs text-red-600">{val.toFixed(2)}</span> : ""
+          },
         },
         {
           title: "P.UNIT",
           dataIndex: "costoSalida",
           key: "costoSalida",
-          width: "10%",
+          width: "9%",
           align: "right" as const,
-          render: (val: number) => val > 0 ? <span className="text-xs">{val.toFixed(4)}</span> : "",
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return val > 0 ? <span className="text-xs">{val.toFixed(4)}</span> : ""
+          },
         },
         {
           title: "TOTAL",
           dataIndex: "totalSalida",
           key: "totalSalida",
-          width: "11%",
+          width: "10%",
           align: "right" as const,
-          render: (val: number) => val > 0 ? <span className="text-xs text-red-600">{val.toFixed(2)}</span> : "",
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return val > 0 ? <span className="text-xs text-red-600">{val.toFixed(2)}</span> : ""
+          },
         },
       ],
     },
@@ -1178,25 +1341,34 @@ const LiquidacionesPage = () => {
           title: "CANT",
           dataIndex: "stockActual",
           key: "stockActual",
-          width: "9%",
+          width: "8%",
           align: "right" as const,
-          render: (val: number) => <span className="text-xs font-bold text-purple-600">{val.toFixed(2)}</span>,
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return <span className="text-xs font-bold text-purple-600">{val.toFixed(2)}</span>
+          },
         },
         {
           title: "P.UNIT",
           dataIndex: "costoPromedio",
           key: "costoPromedio",
-          width: "10%",
+          width: "9%",
           align: "right" as const,
-          render: (val: number) => <span className="text-xs">{val.toFixed(4)}</span>,
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return <span className="text-xs">{val.toFixed(4)}</span>
+          },
         },
         {
           title: "TOTAL",
           dataIndex: "valorStock",
           key: "valorStock",
-          width: "15%",
+          width: "13%",
           align: "right" as const,
-          render: (val: number) => <span className="text-xs font-bold text-purple-600">{val.toFixed(2)}</span>,
+          render: (val: number, record: any) => {
+            if (record.esDescansoKardex) return ""
+            return <span className="text-xs font-bold text-purple-600">{val.toFixed(2)}</span>
+          },
         },
       ],
     },
@@ -1272,6 +1444,15 @@ const LiquidacionesPage = () => {
             <h1 className="text-2xl font-bold text-gray-900">Liquidaciones</h1>
             <p className="text-gray-500">Gestión de liquidaciones desde archivos PDF</p>
           </div>
+          <div className="flex gap-2">
+            <Button
+              onClick={cargarLiquidaciones}
+              loading={cargando}
+              icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>}
+            >
+              Refrescar
+            </Button>
+          </div>
         </div>
 
         {/* Área de carga */}
@@ -1333,8 +1514,12 @@ const LiquidacionesPage = () => {
             {liquidacionesAgrupadasPorEmpresa.map((grupo) => {
               /* const totalesGrupo = calcularTotalesGrupo(grupo.liquidaciones) */
               
-              // Calcular totales reales del kardex (stock actual)
-              const movimientosKardex = generarMovimientosKardex(grupo.liquidaciones)
+              // Obtener kardex únicos para este grupo
+              const kardexDisponibles = obtenerKardexUnicos(grupo.liquidaciones)
+              // console.log('🏢 Empresa:', grupo.numeroDocumento, 'Kardex disponibles:', kardexDisponibles)
+              
+              // Calcular totales reales del kardex (stock actual) - usar filtro si existe
+              const movimientosKardex = generarMovimientosKardex(grupo.liquidaciones, filtroKardexVista)
               const ultimoMovimiento = movimientosKardex[movimientosKardex.length - 1]
               const stockRealTotal = ultimoMovimiento ? ultimoMovimiento.stockActual : 0
               const valorStockReal = ultimoMovimiento ? ultimoMovimiento.valorStock : 0
@@ -1349,14 +1534,40 @@ const LiquidacionesPage = () => {
                       <div className="flex gap-4 items-center">
                         <div className="flex gap-4 text-xs text-gray-600">
                           <span>{grupo.liquidaciones.length} liquidaciones</span>
+                          <span className="font-medium text-blue-700">
+                            {kardexDisponibles.length} productos: K{kardexDisponibles.join(', K')}
+                          </span>
                           <span>{stockRealTotal.toFixed(2)} kg total</span>
                           <span className="font-semibold text-green-700">
                             S/ {valorStockReal.toFixed(2)} total
                           </span>
                         </div>
+                        {vistaKardex && kardexDisponibles.length >= 1 && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">Filtrar:</span>
+                            <Select
+                              placeholder="Todos los productos"
+                              style={{ width: 160 }}
+                              allowClear
+                              value={filtroKardexVista || undefined}
+                              onChange={(value) => setFiltroKardexVista(value || "")}
+                              options={[
+                                { label: "Todos los kardex", value: "" },
+                                ...kardexDisponibles.map(kardex => ({ 
+                                  label: `Solo Kardex ${kardex}`, 
+                                  value: kardex 
+                                }))
+                              ]}
+                              size="small"
+                            />
+                          </div>
+                        )}
                         <Button
                           size="small"
-                          onClick={() => setVistaKardex(!vistaKardex)}
+                          onClick={() => {
+                            setVistaKardex(!vistaKardex)
+                            setFiltroKardexVista("") // Limpiar filtro al cambiar vista
+                          }}
                           icon={vistaKardex ? <TableOutlined /> : <StockOutlined />}
                         >
                           {vistaKardex ? 'Vista Normal' : 'Vista Kardex'}
@@ -1382,7 +1593,7 @@ const LiquidacionesPage = () => {
                     // Vista Kardex
                     <Table
                       columns={columnasKardex}
-                      dataSource={generarMovimientosKardex(grupo.liquidaciones)}
+                      dataSource={generarMovimientosKardex(grupo.liquidaciones, filtroKardexVista)}
                       rowKey="key"
                       pagination={false}
                       size="small"
@@ -1392,13 +1603,22 @@ const LiquidacionesPage = () => {
                       }}
                       components={{
                         body: {
-                          row: (props: any) => (
-                            <tr {...props} style={{ height: '24px' }} />
-                          ),
+                          row: (props: any) => {
+                            const { className = '', ...otherProps } = props
+                            const record = props.children?.props?.record || {}
+                            const rowClassName = record.esDescansoKardex ? 
+                              `${className} bg-blue-50 font-bold border-b-2 border-blue-200` : 
+                              className
+                            return (
+                              <tr {...otherProps} className={rowClassName} style={{ height: '24px' }} />
+                            )
+                          },
                         },
                       }}
                       summary={(pageData) => {
-                        const lastItem = pageData[pageData.length - 1]
+                        // Filtrar solo los movimientos reales (no separadores)
+                        const movimientosReales = pageData.filter(item => !item.esDescansoKardex)
+                        const lastItem = movimientosReales[movimientosReales.length - 1]
                         if (lastItem) {
                           return (
                             <Table.Summary.Row className="font-bold bg-blue-50">
@@ -1409,13 +1629,14 @@ const LiquidacionesPage = () => {
                               <Table.Summary.Cell index={4}></Table.Summary.Cell>
                               <Table.Summary.Cell index={5}></Table.Summary.Cell>
                               <Table.Summary.Cell index={6}></Table.Summary.Cell>
-                              <Table.Summary.Cell index={7} align="right">
+                              <Table.Summary.Cell index={7}></Table.Summary.Cell>
+                              <Table.Summary.Cell index={8} align="right">
                                 <span className="text-purple-600 font-bold">{lastItem.stockActual.toFixed(2)}</span>
                               </Table.Summary.Cell>
-                              <Table.Summary.Cell index={8} align="right">
+                              <Table.Summary.Cell index={9} align="right">
                                 <span className="text-purple-600">{lastItem.costoPromedio?.toFixed(4)}</span>
                               </Table.Summary.Cell>
-                              <Table.Summary.Cell index={9} align="right">
+                              <Table.Summary.Cell index={10} align="right">
                                 <span className="text-purple-600 font-bold">{lastItem.valorStock?.toFixed(2)}</span>
                               </Table.Summary.Cell>
                             </Table.Summary.Row>

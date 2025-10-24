@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react"
-import { Modal, Form, Input, DatePicker, Button, Card, Typography, Statistic, AutoComplete, Select } from "antd"
+import { Modal, Form, Input, DatePicker, Button, Card, Typography, AutoComplete, Select } from "antd"
 import { DollarOutlined, StockOutlined } from "@ant-design/icons"
 import dayjs from "dayjs"
 import { TLiquidacion, TCliente } from "@/types"
@@ -58,28 +58,56 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
   const [tipoDocumento, setTipoDocumento] = useState<'dni' | 'ruc' | 'carnet_extranjeria' | 'pasaporte'>('dni')
   const [numeroDocumento, setNumeroDocumento] = useState<string>("")
   const [kardexSeleccionado, setKardexSeleccionado] = useState<string>("")
-  const [kardexDisponibles, setKardexDisponibles] = useState<Array<{codigo: string, descripcion: string}>>([])
+  const [kardexDisponibles, setKardexDisponibles] = useState<Array<{codigo: string, descripcion: string, stock: number}>>([])
 
-  // Obtener kardex disponibles para la empresa
+  // Obtener kardex disponibles para la empresa con información de stock
   const obtenerKardexDisponibles = () => {
     const liquidacionesEmpresa = liquidaciones.filter(liq => 
       liq.numero_documento === numeroDocumentoEmpresa
     )
     
-    const kardexUnicos = new Map<string, string>()
+    const kardexUnicos = new Map<string, {descripcion: string, stock: number}>()
+    
+    // Generar movimientos para calcular stocks actuales
+    const movimientos = generarMovimientosKardex(liquidacionesEmpresa)
+    
+    // Agrupar movimientos por kardex y obtener el último stock de cada uno
+    const stocksPorKardex = new Map<string, number>()
+    
+    // Filtrar por kardex y obtener el último movimiento de cada uno
+    const kardexesEncontrados = new Set<string>()
+    movimientos.forEach(mov => {
+      if (mov.kardex) {
+        kardexesEncontrados.add(mov.kardex)
+      }
+    })
+    
+    // Para cada kardex, obtener el último movimiento (que tiene el stock actual)
+    kardexesEncontrados.forEach(kardex => {
+      const movimientosDelKardex = movimientos.filter(mov => mov.kardex === kardex)
+      if (movimientosDelKardex.length > 0) {
+        const ultimoMovimiento = movimientosDelKardex[movimientosDelKardex.length - 1]
+        stocksPorKardex.set(kardex, ultimoMovimiento.stockActual || 0)
+      }
+    })
     
     liquidacionesEmpresa.forEach(liq => {
       liq.items.forEach(item => {
         if (item.kardex && !kardexUnicos.has(item.kardex)) {
-          kardexUnicos.set(item.kardex, item.descripcion || `Kardex ${item.kardex}`)
+          const stockActual = stocksPorKardex.get(item.kardex) || 0
+          kardexUnicos.set(item.kardex, {
+            descripcion: item.descripcion || `Kardex ${item.kardex}`,
+            stock: Math.max(0, stockActual)
+          })
         }
       })
     })
     
-    return Array.from(kardexUnicos.entries()).map(([codigo, descripcion]) => ({
+    return Array.from(kardexUnicos.entries()).map(([codigo, info]) => ({
       codigo,
-      descripcion
-    }))
+      descripcion: info.descripcion,
+      stock: info.stock
+    })).sort((a, b) => a.codigo.localeCompare(b.codigo))
   }
 
   // Función para calcular el stock en una fecha específica
@@ -114,7 +142,7 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
     const movimientosDelKardexEnFecha = movimientosKardex.filter(mov => {
       const fechaMovimiento = dayjs(mov.fecha, 'DD/MM/YYYY').format('YYYY-MM-DD')
       const fechaComparacion = dayjs(fecha).format('YYYY-MM-DD')
-      return mov.archivo && mov.archivo.includes(kardex) && fechaMovimiento <= fechaComparacion
+      return mov.kardex === kardex && fechaMovimiento <= fechaComparacion
     })
 
     // Si no hay movimientos, retornar ceros
@@ -138,12 +166,14 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
     }
   }
 
-  // Función auxiliar para generar movimientos (copia de la función de la tabla principal)
+  // Función auxiliar para generar movimientos con stock separado por kardex
   const generarMovimientosKardex = (liquidaciones: TLiquidacion[]) => {
     const movimientos: any[] = []
-    let stockAcumulado = 0
-    let valorInventario = 0
-    let costoPromedioPonderado = 0
+    
+    // Stocks separados por kardex
+    const stocksPorKardex = new Map<string, number>()
+    const valorInventarioPorKardex = new Map<string, number>()
+    const costoPromedioPorKardex = new Map<string, number>()
 
     // Obtener todos los items de todas las liquidaciones
     const todosLosItems = liquidaciones.flatMap(liq => 
@@ -164,10 +194,23 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
 
     // Procesar cada item individual como un movimiento
     itemsOrdenados.forEach((item, index) => {
+      const kardex = item.kardex
       const cantidadIngreso = Number(item.ingreso) || 0
       const cantidadSalida = Number(item.salida) || 0
       const costoUnitario = Number(item.costo_unitario) || 0
       const totalItem = Number(item.total) || 0
+
+      // Inicializar valores para este kardex si no existen
+      if (!stocksPorKardex.has(kardex)) {
+        stocksPorKardex.set(kardex, 0)
+        valorInventarioPorKardex.set(kardex, 0)
+        costoPromedioPorKardex.set(kardex, 0)
+      }
+
+      // Obtener valores actuales para este kardex específico
+      let stockAcumulado = stocksPorKardex.get(kardex) || 0
+      let valorInventario = valorInventarioPorKardex.get(kardex) || 0
+      let costoPromedioPonderado = costoPromedioPorKardex.get(kardex) || 0
 
       // Procesar ingresos
       if (cantidadIngreso > 0) {
@@ -184,6 +227,11 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
         stockAcumulado -= cantidadSalida
         valorInventario = stockAcumulado * costoPromedioPonderado
       }
+
+      // Actualizar mapas con los nuevos valores
+      stocksPorKardex.set(kardex, stockAcumulado)
+      valorInventarioPorKardex.set(kardex, valorInventario)
+      costoPromedioPorKardex.set(kardex, costoPromedioPonderado)
 
       movimientos.push({
         key: `${item.fecha}-${item.kardex}-${item.id}`,
@@ -293,8 +341,9 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
       const kardexOpciones = obtenerKardexDisponibles()
       setKardexDisponibles(kardexOpciones)
       
-      // Seleccionar el primer kardex por defecto si hay opciones
-      const kardexInicial = kardexOpciones.length > 0 ? kardexOpciones[0].codigo : ''
+      // Seleccionar el primer kardex CON STOCK por defecto si hay opciones
+      const kardexConStock = kardexOpciones.find(k => k.stock > 0)
+      const kardexInicial = kardexConStock ? kardexConStock.codigo : (kardexOpciones.length > 0 ? kardexOpciones[0].codigo : '')
       setKardexSeleccionado(kardexInicial)
       
       form.setFieldsValue({
@@ -469,80 +518,103 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
       className="modal-salida-kardex"
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        {/* Información de Stock */}
-        <Card size="small" className={`${stockInfo.stockDisponible > 0 ? 'bg-blue-50' : 'bg-red-50'}`}>
-          <Title level={5} className={`${stockInfo.stockDisponible > 0 ? 'text-blue-700' : 'text-red-700'} mb-3`}>
-            📊 Stock en Fecha: {dayjs(stockInfo.fechaCalculada).format('DD/MM/YYYY')}
-          </Title>
-          <div className="space-y-2">
-            <Statistic
-              title="Cantidad Disponible"
-              value={stockInfo.stockDisponible}
-              suffix="kg"
-              valueStyle={{ 
-                color: stockInfo.stockDisponible > 0 ? '#1890ff' : '#ff4d4f', 
-                fontSize: '16px' 
-              }}
-            />
-            {stockInfo.stockDisponible > 0 ? (
-              <>
-                <Statistic
-                  title="Costo Promedio"
-                  value={stockInfo.costoPromedio}
-                  prefix="S/ "
-                  precision={4}
-                  valueStyle={{ fontSize: '14px' }}
-                />
-                <Statistic
-                  title="Valor Total Stock"
-                  value={stockInfo.valorStock}
-                  prefix="S/ "
-                  precision={2}
-                  valueStyle={{ color: '#52c41a', fontSize: '14px' }}
-                />
-              </>
-            ) : (
-              <div className="text-red-500 text-sm mt-2">
-                ⚠️ No hay stock disponible en esta fecha
-              </div>
-            )}
+        {/* Información de Stock Mejorada */}
+        <Card 
+          size="small" 
+          className={`border-2 ${stockInfo.stockDisponible > 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <Title level={5} className={`${stockInfo.stockDisponible > 0 ? 'text-blue-700' : 'text-red-700'} m-0`}>
+              📊 Stock para Kardex {kardexSeleccionado}
+            </Title>
+            <Text className="text-gray-500 text-sm">
+              {dayjs(stockInfo.fechaCalculada).format('DD/MM/YYYY')}
+            </Text>
           </div>
+          
+          {stockInfo.stockDisponible > 0 ? (
+            <div className="grid grid-cols-3 gap-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600">
+                  {stockInfo.stockDisponible.toFixed(2)}
+                </div>
+                <div className="text-sm text-gray-600">kg disponibles</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-semibold text-green-600">
+                  S/ {stockInfo.costoPromedio.toFixed(4)}
+                </div>
+                <div className="text-sm text-gray-600">costo promedio</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-semibold text-purple-600">
+                  S/ {stockInfo.valorStock.toFixed(2)}
+                </div>
+                <div className="text-sm text-gray-600">valor total</div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-4">
+              <div className="text-xl font-bold text-red-500 mb-2">
+                Sin stock disponible
+              </div>
+              <div className="text-sm text-gray-600">
+                No hay inventario para este kardex en la fecha seleccionada
+              </div>
+            </div>
+          )}
         </Card>
 
-        {/* Información de Venta */}
-        <Card size="small" className={`${precioUnitario > 0 ? 'bg-green-50' : 'bg-gray-50'}`}>
-          <Title level={5} className={`${precioUnitario > 0 ? 'text-green-700' : 'text-gray-700'} mb-3`}>
+        {/* Información de Venta Mejorada */}
+        <Card 
+          size="small" 
+          className={`border-2 ${cantidad > 0 && precioUnitario > 0 ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}
+        >
+          <Title level={5} className={`${cantidad > 0 && precioUnitario > 0 ? 'text-green-700' : 'text-gray-700'} mb-3`}>
             💰 Información de Venta
           </Title>
-          <div className="space-y-2">
-            {precioUnitario > 0 ? (
-              <>
-                <Statistic
-                  title="Precio de Venta"
-                  value={precioUnitario}
-                  prefix="S/ "
-                  precision={4}
-                  valueStyle={{ color: '#52c41a', fontSize: '16px' }}
-                />
-                <div className="text-xs text-gray-600">
-                  <Text type="secondary">
-                    Precio basado en costo promedio de la fecha
-                  </Text>
-                </div>
-                {stockInfo.costoPromedio > 0 && (
-                  <div className="text-xs text-blue-600">
-                    <Text>
-                      Costo base: S/ {stockInfo.costoPromedio.toFixed(4)}
-                    </Text>
+          
+          {cantidad > 0 && precioUnitario > 0 ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="text-center">
+                  <div className="text-lg font-bold text-blue-600">
+                    {cantidad.toFixed(2)} kg
                   </div>
-                )}
-              </>
-            ) : (
-              <div className="text-gray-500 text-sm">
-                ℹ️ Seleccione una fecha con stock disponible
+                  <div className="text-sm text-gray-600">cantidad</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-bold text-green-600">
+                    S/ {precioUnitario.toFixed(4)}
+                  </div>
+                  <div className="text-sm text-gray-600">precio/kg</div>
+                </div>
               </div>
-            )}
-          </div>
+              
+              <div className="border-t pt-3">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-600">
+                    S/ {(cantidad * precioUnitario).toFixed(2)}
+                  </div>
+                  <div className="text-sm text-gray-600">total venta</div>
+                </div>
+              </div>
+              
+              {stockInfo.costoPromedio > 0 && (
+                <div className="bg-blue-100 p-2 rounded text-center">
+                  <div className="text-xs text-blue-700">
+                    Costo base: S/ {stockInfo.costoPromedio.toFixed(4)} por kg
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-4">
+              <div className="text-gray-500 text-sm">
+                ℹ️ Complete cantidad y precio para ver el resumen
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -564,12 +636,35 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
             onChange={handleKardexChange}
             showSearch
             optionFilterProp="children"
+            size="large"
+            className="w-full"
+            listHeight={400}
+            dropdownStyle={{ minWidth: 500 }}
           >
             {kardexDisponibles.map(kardex => (
-              <Option key={kardex.codigo} value={kardex.codigo}>
-                <div>
-                  <div className="font-medium">Kardex: {kardex.codigo}</div>
-                  <div className="text-sm text-gray-500">{kardex.descripcion}</div>
+              <Option 
+                key={kardex.codigo} 
+                value={kardex.codigo}
+                disabled={kardex.stock <= 0}
+                style={{ height: 'auto', minHeight: '60px', padding: '12px' }}
+              >
+                <div className="flex justify-between items-center py-2">
+                  <div className="flex-1">
+                    <div className="font-semibold text-gray-900 text-base">
+                      Kardex {kardex.codigo}
+                    </div>
+                    <div className="text-sm text-gray-600 truncate" style={{ maxWidth: '350px' }}>
+                      {kardex.descripcion}
+                    </div>
+                  </div>
+                  <div className="ml-3 text-right flex-shrink-0">
+                    <div className={`font-bold text-base ${kardex.stock > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {kardex.stock.toFixed(2)} kg
+                    </div>
+                    <div className={`text-xs ${kardex.stock > 0 ? 'text-green-500' : 'text-red-400'}`}>
+                      {kardex.stock > 0 ? '✓ Disponible' : '✗ Sin stock'}
+                    </div>
+                  </div>
                 </div>
               </Option>
             ))}
