@@ -79,9 +79,44 @@ export async function parseLiquidacionData(text: string, filename: string): Prom
   const facturaMatch = text.match(/E\d+\s*-\s*\d+/i)
   const numeroFactura = facturaMatch ? facturaMatch[0] : numeroDocumento
   
-  // Buscar fecha de emisión
-  const fechaMatch = text.match(/Fecha\s+de\s+Emisi[óo]n\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i)
-  const fechaEmision = fechaMatch ? fechaMatch[1] : new Date().toLocaleDateString('es-PE')
+  // Buscar fecha del documento con múltiples patrones (mejorados)
+  let fechaEmision = new Date().toLocaleDateString('es-PE')
+  
+  const patronesFecha = [
+    // Patrón específico para "Fecha de Emisión : 10/02/2025" (con espacios alrededor de :)
+    /Fecha\s+de\s+Emisi[óo]n\s+:\s+(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    /Fecha\s+de\s+Emisi[óo]n\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    /Fecha\s+de\s+Emisi[óo]n\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    // Patrón específico para el formato extraño que vemos en el texto
+    /Fecha\s+de\s+Emisi[óo]n\s*:.*?(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    /F\.?\s*Emisi[óo]n\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    /Fecha\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    /F\.\s*(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    // Patrón general para encontrar cualquier fecha (sin grupo de captura por el flag g)
+    /\d{1,2}\/\d{1,2}\/\d{4}/g, // Buscar cualquier fecha en formato D/M/YYYY o DD/MM/YYYY
+  ]
+  
+  for (let i = 0; i < patronesFecha.length; i++) {
+    const patron = patronesFecha[i]
+    const match = text.match(patron)
+    if (match) {
+      // Si es el último patrón (que tiene flag 'g'), tomar el primer elemento del array
+      if (i === patronesFecha.length - 1) {
+        fechaEmision = match[0]
+      } else {
+        fechaEmision = match[1]
+      }
+      break
+    }
+  }
+  
+  // Si aún no encontró fecha, buscar en formato DD-MM-YYYY
+  if (fechaEmision === new Date().toLocaleDateString('es-PE')) {
+    const fechaMatch = text.match(/(\d{1,2}-\d{1,2}-\d{4})/g)
+    if (fechaMatch) {
+      fechaEmision = fechaMatch[0].replace(/-/g, '/')
+    }
+  }
   
   // Buscar proveedor/señor (mejorado con diferentes variantes)
   let proveedor = 'DESCONOCIDO'

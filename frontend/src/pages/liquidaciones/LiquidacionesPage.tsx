@@ -9,11 +9,12 @@ import {
   CloseOutlined,
   PlusOutlined,
   InfoCircleOutlined,
+  TableOutlined,
+  StockOutlined,
 } from "@ant-design/icons"
 import {
   Button,
   Table,
-  Tag,
   Upload,
   Card,
   message,
@@ -21,15 +22,16 @@ import {
   Spin,
   Input,
   Select,
+  Tooltip,
 } from "antd"
 import type { UploadProps, TableColumnsType } from "antd"
-import { TItemLiquidacion, TLiquidacion, TSaldoKardex } from "@/types/liquidacion"
+import { TItemLiquidacion, TLiquidacion } from "@/types/liquidacion"
 import { procesarPDFCompleto } from "@/utils/pdfProcessor"
 import * as liquidacionService from "@/services/liquidacionService"
 import toast from "react-hot-toast"
 import ResponsiveContainer from "@/components/ResponsiveContainer"
 import ModalDetalleLiquidacion from "@/components/liquidaciones/ModalDetalleLiquidacion"
-import ModalRegistrarSalida from "@/components/liquidaciones/ModalRegistrarSalida"
+import ModalSalidaKardex from "@/components/liquidaciones/ModalSalidaKardex"
 import dayjs from "dayjs"
 
 const { Dragger } = Upload
@@ -46,41 +48,159 @@ const LiquidacionesPage = () => {
   const [editandoKardex, setEditandoKardex] = useState<{ [key: number]: boolean }>({})
   const [kardexEditado, setKardexEditado] = useState<{ [key: number]: string }>({})
 
-  // Estados para agregar salida
-  const [modalSalidaVisible, setModalSalidaVisible] = useState(false)
-  const [kardexSeleccionado, setKardexSeleccionado] = useState<string>("")
-  const [nuevaSalida, setNuevaSalida] = useState({
-    fecha: dayjs(),
-    proveedor: "",
-    ruc_dni: "",
-    cantidad_salida: 0,
-    costo_unitario: 0,
-  })
-
   // Estados para edición de items
   const [editandoItem, setEditandoItem] = useState<{ [key: number]: boolean }>({})
   const [itemEditado, setItemEditado] = useState<{ [key: number]: TItemLiquidacion }>({})
+
+  // Estados para edición de fecha del documento
+  const [editandoFecha, setEditandoFecha] = useState<{ [key: number]: boolean }>({})
+  const [fechaEditada, setFechaEditada] = useState<{ [key: number]: string }>({})
 
   // Estados para previsualización de PDF agregado
   const [modalPrevisualizacionVisible, setModalPrevisualizacionVisible] = useState(false)
   const [itemsPrevisualizacion, setItemsPrevisualizacion] = useState<TItemLiquidacion[]>([])
   const [nombreArchivoPrevisualizacion, setNombreArchivoPrevisualizacion] = useState("")
+  const [vistaKardex, setVistaKardex] = useState(false)
+  const [modalSalidaKardexVisible, setModalSalidaKardexVisible] = useState(false)
+  const [fechaSalidaSeleccionada] = useState("")
+  const [kardexSeleccionadoParaSalida, setKardexSeleccionadoParaSalida] = useState("")
   const [editandoKardexPreview, setEditandoKardexPreview] = useState<{ [key: number]: boolean }>({})
   const [kardexEditadoPreview, setKardexEditadoPreview] = useState<{ [key: number]: string }>({})
 
   // Estados para filtros
   const [filtroDocumento, setFiltroDocumento] = useState<string>("")
-  const [filtroMes, setFiltroMes] = useState<string>("")
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>("")
 
-  // Función helper para ordenar items
+  // Helper para obtener la fecha del documento de los items
+  const obtenerFechaDocumento = (liquidacion: TLiquidacion): string => {
+    if (liquidacion.items && liquidacion.items.length > 0) {
+      return liquidacion.items[0].fecha || "Sin fecha"
+    }
+    return "Sin fecha"
+  }
+
+  // Helper para calcular cantidad total de una liquidación
+  const calcularCantidadTotal = (liquidacion: TLiquidacion): number => {
+    return liquidacion.items.reduce((total, item) => total + Number(item.ingreso), 0)
+  }
+
+  // Helper para calcular costo promedio de una liquidación
+  const calcularCostoPromedio = (liquidacion: TLiquidacion): number => {
+    const totalCantidad = calcularCantidadTotal(liquidacion)
+    const totalCosto = liquidacion.items.reduce((total, item) => 
+      total + (Number(item.ingreso) * Number(item.costo_unitario)), 0
+    )
+    return totalCantidad > 0 ? totalCosto / totalCantidad : 0
+  }
+
+  // Helper para calcular totales de un grupo de liquidaciones
+  const calcularTotalesGrupo = (liquidaciones: TLiquidacion[]) => {
+    const totalCantidad = liquidaciones.reduce((sum, liq) => sum + calcularCantidadTotal(liq), 0)
+    const totalCompra = liquidaciones.reduce((sum, liq) => sum + Number(liq.total_general), 0)
+    
+    // Calcular costo promedio ponderado del grupo
+    const costoPromedioGrupo = totalCantidad > 0 ? totalCompra / totalCantidad : 0
+    
+    return {
+      totalCantidad,
+      totalCompra,
+      costoPromedioGrupo
+    }
+  }
+
+  // Helper para generar movimientos tipo kardex
+  const generarMovimientosKardex = (liquidaciones: TLiquidacion[]) => {
+    const movimientos: any[] = []
+    let stockAcumulado = 0
+    let valorInventario = 0
+    let costoPromedioPonderado = 0
+
+    // Obtener todos los items de todas las liquidaciones
+    const todosLosItems = liquidaciones.flatMap(liq => 
+      liq.items.map(item => ({
+        ...item,
+        liquidacion_id: liq.id,
+        archivo: liq.nombre_archivo
+      }))
+    )
+
+    // NO agrupar - cada item es un movimiento separado
+    const itemsOrdenados = todosLosItems.sort((a, b) => {
+      // Ordenar por fecha primero, luego por id para mantener consistencia
+      if (a.fecha !== b.fecha) {
+        return a.fecha.localeCompare(b.fecha)
+      }
+      return (a.id || 0) - (b.id || 0)
+    })
+
+    // Procesar cada item individual como un movimiento
+    itemsOrdenados.forEach((item, index) => {
+      const cantidadIngreso = Number(item.ingreso) || 0
+      const cantidadSalida = Number(item.salida) || 0
+      const costoUnitario = Number(item.costo_unitario) || 0
+      const totalItem = Number(item.total) || 0
+
+      // Procesar ingresos
+      if (cantidadIngreso > 0) {
+        const nuevoValorInventario = valorInventario + (cantidadIngreso * costoUnitario)
+        const nuevoStock = stockAcumulado + cantidadIngreso
+        costoPromedioPonderado = nuevoStock > 0 ? nuevoValorInventario / nuevoStock : 0
+        
+        stockAcumulado = nuevoStock
+        valorInventario = nuevoValorInventario
+      }
+
+      // Procesar salidas
+      if (cantidadSalida > 0) {
+        stockAcumulado -= cantidadSalida
+        valorInventario = stockAcumulado * costoPromedioPonderado
+      }
+
+      movimientos.push({
+        key: `${item.fecha}-${item.kardex}-${item.id}`,
+        fecha: item.fecha,
+        archivo: item.archivo,
+        descripcion: item.descripcion,
+        proveedor: item.proveedor,
+        // Ingreso
+        cantidadIngreso: cantidadIngreso,
+        costoIngreso: costoUnitario,
+        totalIngreso: totalItem,
+        // Salida
+        cantidadSalida: cantidadSalida,
+        costoSalida: costoPromedioPonderado,
+        totalSalida: cantidadSalida * costoPromedioPonderado,
+        // Stock
+        stockActual: stockAcumulado,
+        costoPromedio: costoPromedioPonderado,
+        valorStock: valorInventario,
+        // Metadata
+        tipo: cantidadIngreso > 0 ? 'ingreso' : 'salida',
+        esCorte: cantidadSalida > 0,
+        index
+      })
+    })
+
+    return movimientos
+  }
+
+  // Helper para ordenar items
   const ordenarItems = (items: TItemLiquidacion[]): TItemLiquidacion[] => {
     return [...items].sort((a, b) => {
       // Primero ordenar por kardex
       if (a.kardex !== b.kardex) {
         return a.kardex.localeCompare(b.kardex)
       }
-      // Dentro del mismo kardex, ingresos primero, salidas después
-      // Inferir el tipo basándose en ingreso/salida si no está definido
+      
+      // Dentro del mismo kardex, ordenar por fecha
+      const fechaA = dayjs(a.fecha, 'DD/MM/YYYY')
+      const fechaB = dayjs(b.fecha, 'DD/MM/YYYY')
+      
+      if (!fechaA.isSame(fechaB, 'day')) {
+        return fechaA.diff(fechaB)
+      }
+      
+      // En la misma fecha y kardex, ingresos primero, salidas después
       const tipoA = a.tipo || (Number(a.ingreso) > 0 ? 'ingreso' : 'salida')
       const tipoB = b.tipo || (Number(b.ingreso) > 0 ? 'ingreso' : 'salida')
 
@@ -108,6 +228,8 @@ const LiquidacionesPage = () => {
   }
 
   // Calcular saldos por kardex
+  // COMENTADO: Ya no se usa después de ocultar el componente de resumen
+  /*
   const calcularSaldosPorKardex = useMemo((): TSaldoKardex[] => {
     if (!liquidacionActual) return []
 
@@ -151,6 +273,7 @@ const LiquidacionesPage = () => {
 
     return Array.from(saldosPorKardex.values())
   }, [liquidacionActual])
+  */
 
   // Cargar liquidaciones al montar el componente
   useEffect(() => {
@@ -199,6 +322,22 @@ const LiquidacionesPage = () => {
       // Validar que no se excedan 20 archivos
       if (fileList.length > 20) {
         message.warning("Solo puedes procesar hasta 20 archivos a la vez")
+        return Upload.LIST_IGNORE
+      }
+
+      // Validar que el archivo no haya sido procesado anteriormente
+      const archivoExistente = liquidaciones.find(l => l.nombre_archivo === file.name)
+      if (archivoExistente) {
+        message.error(`${file.name}: Este archivo ya fue procesado anteriormente. No se permite duplicar liquidaciones.`)
+        toast.error(`${file.name}: Ya existe en el sistema`)
+        return Upload.LIST_IGNORE
+      }
+
+      // Validar que no haya duplicados en el lote actual
+      const duplicadoEnLoteActual = liquidacionesActuales.find(l => l.nombre_archivo === file.name)
+      if (duplicadoEnLoteActual) {
+        message.error(`${file.name}: Este archivo ya está siendo procesado en el lote actual.`)
+        toast.error(`${file.name}: Archivo duplicado en el lote`)
         return Upload.LIST_IGNORE
       }
 
@@ -264,6 +403,21 @@ const LiquidacionesPage = () => {
         return Upload.LIST_IGNORE
       }
 
+      // Validar que el archivo no haya sido procesado anteriormente
+      const archivoExistente = liquidaciones.find(l => l.nombre_archivo === file.name)
+      if (archivoExistente) {
+        message.error(`${file.name}: Este archivo ya fue procesado anteriormente. No se permite duplicar liquidaciones.`)
+        toast.error(`${file.name}: Ya existe en el sistema`)
+        return Upload.LIST_IGNORE
+      }
+
+      // Validar que el archivo no esté ya incluido en la liquidación actual
+      if (liquidacionActual.nombre_archivo.includes(file.name)) {
+        message.error(`${file.name}: Este archivo ya está incluido en esta liquidación.`)
+        toast.error(`${file.name}: Ya forma parte de esta liquidación`)
+        return Upload.LIST_IGNORE
+      }
+
       setProcesando(true)
 
       try {
@@ -279,6 +433,21 @@ const LiquidacionesPage = () => {
         if (liquidacionProcesada.numero_documento !== liquidacionActual.numero_documento) {
           toast.error(
             `El documento PDF (${liquidacionProcesada.numero_documento}) no pertenece a esta liquidación (${liquidacionActual.numero_documento}). Por favor, verifica el archivo.`,
+            {
+              duration: 6000,
+            }
+          )
+          setProcesando(false)
+          return Upload.LIST_IGNORE
+        }
+
+        // Validar que no sea un archivo duplicado por número de documento
+        const documentoExistente = liquidaciones.find(l => 
+          l.numero_documento === liquidacionProcesada.numero_documento && l.id !== liquidacionActual.id
+        )
+        if (documentoExistente) {
+          toast.error(
+            `Ya existe una liquidación con el número de documento ${liquidacionProcesada.numero_documento}. No se pueden procesar documentos duplicados.`,
             {
               duration: 6000,
             }
@@ -333,6 +502,8 @@ const LiquidacionesPage = () => {
       setLiquidacionesActuales([])
       setEditandoKardex({})
       setKardexEditado({})
+      setEditandoFecha({})
+      setFechaEditada({})
 
       toast.success(`${liquidacionesGuardadas.length} liquidación(es) guardada(s) exitosamente en la base de datos`)
     } catch (error) {
@@ -490,6 +661,62 @@ const LiquidacionesPage = () => {
     delete itemEditado[index]
   }
 
+  // Habilitar edición de fecha del documento (para todos los items de una liquidación)
+  const handleEditarFecha = (liqIndex: number) => {
+    const liquidacion = liquidacionesActuales[liqIndex]
+    const fechaActual = liquidacion.items.length > 0 ? liquidacion.items[0].fecha : ""
+    setEditandoFecha({ ...editandoFecha, [liqIndex]: true })
+    setFechaEditada({ ...fechaEditada, [liqIndex]: fechaActual })
+  }
+
+  // Guardar fecha editada (aplicar a todos los items de la liquidación)
+  const handleGuardarFecha = (liqIndex: number) => {
+    const nuevaFecha = fechaEditada[liqIndex]
+    if (!nuevaFecha || nuevaFecha.trim() === "") {
+      toast.error("La fecha no puede estar vacía")
+      return
+    }
+
+    // Validar formato de fecha DD/MM/YYYY
+    const formatoFecha = /^\d{2}\/\d{2}\/\d{4}$/
+    if (!formatoFecha.test(nuevaFecha)) {
+      toast.error("La fecha debe tener el formato DD/MM/YYYY")
+      return
+    }
+
+    // Actualizar la fecha en todos los items de la liquidación
+    const liquidacionesActualizadas = [...liquidacionesActuales]
+    liquidacionesActualizadas[liqIndex] = {
+      ...liquidacionesActualizadas[liqIndex],
+      items: liquidacionesActualizadas[liqIndex].items.map(item => ({
+        ...item,
+        fecha: nuevaFecha.trim()
+      }))
+    }
+
+    setLiquidacionesActuales(liquidacionesActualizadas)
+    setEditandoFecha({ ...editandoFecha, [liqIndex]: false })
+    toast.success("Fecha actualizada en todos los items de la liquidación")
+  }
+
+  // Cancelar edición de fecha
+  const handleCancelarEdicionFecha = (liqIndex: number) => {
+    setEditandoFecha({ ...editandoFecha, [liqIndex]: false })
+    setFechaEditada({ ...fechaEditada, [liqIndex]: "" })
+  }
+
+  // Actualizar fecha de todos los items de una liquidación (para modal de detalle)
+  const handleActualizarFechaItems = (nuevaFecha: string) => {
+    if (!liquidacionActual) return
+
+    const itemsActualizados = liquidacionActual.items.map(item => ({
+      ...item,
+      fecha: nuevaFecha
+    }))
+
+    actualizarLiquidacion({ items: itemsActualizados })
+  }
+
   // Actualizar liquidación existente
   const handleActualizarLiquidacion = async () => {
     if (!liquidacionActual || !liquidacionActual.id) return
@@ -523,67 +750,6 @@ const LiquidacionesPage = () => {
     }
   }
 
-  // Abrir modal para agregar salida
-  const handleAbrirModalSalida = (kardex: string) => {
-    setKardexSeleccionado(kardex)
-    const saldo = calcularSaldosPorKardex.find((s) => s.kardex === kardex)
-    setNuevaSalida({
-      fecha: dayjs(),
-      proveedor: "",
-      ruc_dni: "",
-      cantidad_salida: saldo?.saldo_pendiente || 0,
-      costo_unitario: saldo?.costo_promedio || 0,
-    })
-    setModalSalidaVisible(true)
-  }
-
-  // Guardar nueva salida
-  const handleGuardarSalida = () => {
-    if (!liquidacionActual || !kardexSeleccionado) return
-
-    if (!nuevaSalida.proveedor || !nuevaSalida.ruc_dni || nuevaSalida.cantidad_salida <= 0) {
-      toast.error("Por favor completa todos los campos correctamente")
-      return
-    }
-
-    const saldo = calcularSaldosPorKardex.find((s) => s.kardex === kardexSeleccionado)
-    if (!saldo) return
-
-    if (nuevaSalida.cantidad_salida > saldo.saldo_pendiente) {
-      toast.error(
-        `La cantidad de salida (${nuevaSalida.cantidad_salida}) no puede ser mayor al saldo pendiente (${saldo.saldo_pendiente})`
-      )
-      return
-    }
-
-    // Crear el nuevo item de salida
-    const nuevoItemSalida: TItemLiquidacion = {
-      kardex: kardexSeleccionado,
-      descripcion: saldo.descripcion,
-      fecha: nuevaSalida.fecha.format("DD/MM/YYYY"),
-      proveedor: nuevaSalida.proveedor,
-      ruc_dni: nuevaSalida.ruc_dni,
-      ingreso: 0,
-      salida: nuevaSalida.cantidad_salida,
-      costo_unitario: nuevaSalida.costo_unitario,
-      total: nuevaSalida.cantidad_salida * nuevaSalida.costo_unitario,
-      tipo: "salida",
-    }
-
-    // Agregar la salida
-    const todosLosItems = [...liquidacionActual.items, nuevoItemSalida]
-    const nuevoTotalGeneral = todosLosItems.reduce((sum, item) => sum + Number(item.total), 0)
-
-    actualizarLiquidacion({
-      items: todosLosItems,
-      total_items: liquidacionActual.total_items + 1,
-      total_general: nuevoTotalGeneral,
-    })
-
-    setModalSalidaVisible(false)
-    toast.success("Salida registrada. Haz clic en 'Guardar Cambios' para persistir en la BD")
-  }
-
   // Ver detalle de liquidación
   const handleVerDetalle = (liquidacion: TLiquidacion) => {
     setLiquidacionActual({
@@ -614,18 +780,174 @@ const LiquidacionesPage = () => {
     })
   }
 
+  // Función para manejar registro de salida desde kardex
+  const handleRegistrarSalidaKardex = async (datosSalida: any) => {
+    try {
+      // Extraer información del cliente
+      const nombreCliente = datosSalida.cliente?.nombre_mostrar || datosSalida.cliente?.nombres || 'Cliente directo'
+      const documentoCliente = datosSalida.cliente?.documento_completo || datosSalida.cliente?.documento_numero || ''
+      
+      // La fecha ya viene formateada correctamente desde el modal (DD/MM/YYYY)
+      const fechaFormateada = datosSalida.fecha
+
+      // Buscar la liquidación que contenga este kardex EN LA EMPRESA ESPECÍFICA para obtener el número de documento de empresa matriz
+      let liquidacionReferencia = liquidaciones.find(liq => 
+        liq.numero_documento === kardexSeleccionadoParaSalida &&
+        liq.items.some(item => item.kardex === datosSalida.kardex)
+      )
+
+      if (!liquidacionReferencia) {
+        toast.error(`No se encontró ningún ingreso para el kardex ${datosSalida.kardex} en la empresa ${kardexSeleccionadoParaSalida}. Debe haber ingresos antes de registrar salidas.`)
+        return
+      }
+
+      // Usar el número de documento de empresa matriz correcto (ya verificado arriba)
+      const numeroDocumentoEmpresa = kardexSeleccionadoParaSalida
+
+      // Buscar primero si existe un item con la misma fecha en cualquier liquidación de salidas de esta empresa
+      let liquidacionSalidas = null
+      const liquidacionesSalidasEmpresa = liquidaciones.filter(liq => 
+        liq.numero_documento === numeroDocumentoEmpresa && 
+        liq.nombre_archivo.includes('SALIDAS') // Identificar liquidaciones de salidas
+      )
+
+      // Buscar en todas las liquidaciones de salidas de la empresa si hay un item con la misma fecha
+      for (const liquidacion of liquidacionesSalidasEmpresa) {
+        const itemConMismaFecha = liquidacion.items.find(item => item.fecha === fechaFormateada)
+        if (itemConMismaFecha) {
+          liquidacionSalidas = liquidacion // Usar la liquidación padre que contiene el item con la misma fecha
+          break
+        }
+      }
+
+      // Preparar el item de salida antes de crear/actualizar la liquidación
+      let numeroDocumentoLimpio = ''
+      if (documentoCliente) {
+        const match = documentoCliente.match(/(?:RUC|DNI|CARNET_EXTRANJERIA|PASAPORTE):\s*(.+)/i)
+        if (match) {
+          numeroDocumentoLimpio = match[1].trim()
+        } else {
+          numeroDocumentoLimpio = documentoCliente
+        }
+      }
+
+      // Buscar la descripción correcta del kardex en todas las liquidaciones de la empresa
+      let descripcionProducto = `${datosSalida.kardex} - Producto`
+      const liquidacionesEmpresa = liquidaciones.filter(liq => liq.numero_documento === numeroDocumentoEmpresa)
+      
+      for (const liq of liquidacionesEmpresa) {
+        const itemConDescripcion = liq.items.find(item => 
+          item.kardex === datosSalida.kardex && item.descripcion && item.descripcion.trim() !== ''
+        )
+        if (itemConDescripcion) {
+          descripcionProducto = itemConDescripcion.descripcion
+          break
+        }
+      }
+
+      const nuevoItemSalida: TItemLiquidacion = {
+        kardex: datosSalida.kardex,
+        descripcion: descripcionProducto,
+        fecha: fechaFormateada,
+        proveedor: nombreCliente,
+        ruc_dni: numeroDocumentoLimpio,
+        ingreso: 0,
+        salida: datosSalida.cantidad,
+        costo_unitario: datosSalida.precioUnitario, // Usar el precio unitario del modal
+        total: datosSalida.total, // Usar el total calculado del modal
+        tipo: 'salida'
+      }
+
+      if (!liquidacionSalidas) {
+        // Crear nueva liquidación CON el primer item incluido
+        const nuevaLiquidacionSalidas = {
+          numero_documento: numeroDocumentoEmpresa,
+          fecha_procesamiento: new Date(),
+          nombre_archivo: `SALIDAS-${numeroDocumentoEmpresa}-${Date.now()}.virtual`,
+          total_items: 1,
+          total_general: 0,
+          estado: 'procesado' as const,
+          items: [nuevoItemSalida]
+        }
+
+        const response = await liquidacionService.storeLiquidacion(nuevaLiquidacionSalidas)
+        liquidacionSalidas = response.data.content
+        setLiquidaciones(prev => [...prev, liquidacionSalidas!])
+        toast.success(`Salida registrada: ${datosSalida.cantidad}kg a ${nombreCliente} por S/ ${datosSalida.total}`)
+      } else {
+        // Ya existe liquidación de salidas, agregar el nuevo item preservando los existentes
+        const nuevoItemSinId = { ...nuevoItemSalida }
+        delete nuevoItemSinId.id // Asegurar que no tenga ID para que sea creado como nuevo
+        
+        // Crear una copia explícita de todos los items existentes SIN sus IDs para que se recreen
+        const itemsExistentesSinId = liquidacionSalidas.items.map(item => ({
+          kardex: item.kardex,
+          descripcion: item.descripcion,
+          fecha: item.fecha,
+          proveedor: item.proveedor,
+          ruc_dni: item.ruc_dni,
+          ingreso: item.ingreso,
+          salida: item.salida,
+          costo_unitario: item.costo_unitario,
+          total: item.total,
+          tipo: item.tipo
+        }))
+        
+        // Agregar el nuevo item a la lista
+        const todosLosItems = [...itemsExistentesSinId, nuevoItemSinId]
+        
+        // Preparar la liquidación actualizada con todos los items
+        const liquidacionActualizada = {
+          ...liquidacionSalidas,
+          total_items: todosLosItems.length,
+          total_general: todosLosItems.reduce((sum, item) => sum + Number(item.total || 0), 0),
+          items: todosLosItems
+        }
+        
+        // Actualizar la liquidación enviando todos los items (existentes + nuevo)
+        const response = await liquidacionService.updateLiquidacion(liquidacionSalidas.id!, liquidacionActualizada)
+        const liquidacionActualizadaCompleta = response.data.content
+        
+        // Actualizar el estado local con la respuesta del backend
+        liquidacionSalidas.items = ordenarItems(liquidacionActualizadaCompleta.items)
+        liquidacionSalidas.total_items = liquidacionActualizadaCompleta.total_items
+        liquidacionSalidas.total_general = liquidacionActualizadaCompleta.total_general
+        
+        setLiquidaciones(prev => 
+          prev.map(liq => 
+            liq.id === liquidacionSalidas!.id ? liquidacionSalidas! : liq
+          )
+        )
+        toast.success(`Salida registrada: ${datosSalida.cantidad}kg a ${nombreCliente} por S/ ${datosSalida.total}`)
+      }
+
+      // Cerrar modal
+      setModalSalidaKardexVisible(false)
+
+      // Recargar las liquidaciones desde el servidor para obtener los datos más actualizados
+      try {
+        const response = await liquidacionService.getLiquidaciones()
+        const liquidacionesActualizadas = response.data.content || []
+        setLiquidaciones(liquidacionesActualizadas)
+      } catch (error) {
+        console.error('Error recargando liquidaciones:', error)
+      }
+
+    } catch (error) {
+      console.error('Error registrando salida:', error)
+      toast.error('Error al registrar la salida')
+      throw error // Re-lanzar el error para que el modal no se cierre
+    }
+  }
+
   // Obtener documentos únicos para el filtro
   const documentosUnicos = useMemo(() => {
     return Array.from(new Set(liquidaciones.map(l => l.numero_documento))).sort()
   }, [liquidaciones])
 
-  // Obtener meses únicos para el filtro
-  const mesesUnicos = useMemo(() => {
-    const meses = liquidaciones.map(l => {
-      const fecha = new Date(l.fecha_procesamiento)
-      return `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`
-    })
-    return Array.from(new Set(meses)).sort().reverse()
+  // Obtener empresas únicas para el filtro (basado en número de documento)
+  const empresasUnicas = useMemo(() => {
+    return Array.from(new Set(liquidaciones.map(l => l.numero_documento))).sort()
   }, [liquidaciones])
 
   // Filtrar liquidaciones
@@ -636,119 +958,247 @@ const LiquidacionesPage = () => {
       filtradas = filtradas.filter(l => l.numero_documento === filtroDocumento)
     }
 
-    if (filtroMes) {
-      filtradas = filtradas.filter(l => {
-        const fecha = new Date(l.fecha_procesamiento)
-        const mes = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`
-        return mes === filtroMes
-      })
+    if (filtroEmpresa) {
+      filtradas = filtradas.filter(l => l.numero_documento === filtroEmpresa)
     }
 
     return filtradas
-  }, [liquidaciones, filtroDocumento, filtroMes])
+  }, [liquidaciones, filtroDocumento, filtroEmpresa])
 
-  // Agrupar liquidaciones por mes
-  const liquidacionesAgrupadasPorMes = useMemo(() => {
+  // Agrupar liquidaciones por número de documento de empresa (RUC)
+  const liquidacionesAgrupadasPorEmpresa = useMemo(() => {
     const grupos: { [key: string]: TLiquidacion[] } = {}
 
     liquidacionesFiltradas.forEach(liquidacion => {
-      const fecha = new Date(liquidacion.fecha_procesamiento)
-      const mesKey = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`
-
-      if (!grupos[mesKey]) {
-        grupos[mesKey] = []
+      let numeroDocumento = liquidacion.numero_documento
+      
+      // Si es una liquidación de salidas (archivo virtual), extraer el RUC del nombre del archivo
+      if (liquidacion.nombre_archivo.includes('.virtual')) {
+        // El formato del archivo es: SALIDAS-[RUC]-[timestamp].virtual
+        // Extraer el RUC del nombre del archivo
+        const match = liquidacion.nombre_archivo.match(/SALIDAS-(\d+)-/)
+        if (match && match[1]) {
+          numeroDocumento = match[1]
+        }
+        // Si no se puede extraer del nombre, usar el numero_documento original
+        // (esto mantiene compatibilidad con archivos que no sigan el formato esperado)
       }
-      grupos[mesKey].push(liquidacion)
+      
+      if (!grupos[numeroDocumento]) {
+        grupos[numeroDocumento] = []
+      }
+      grupos[numeroDocumento].push(liquidacion)
     })
 
-    // Convertir a array y ordenar por mes (más reciente primero)
+    // Convertir a array y ordenar por número de documento
     return Object.entries(grupos)
-      .map(([key, items]) => {
-        const [year, month] = key.split('-')
-        const fecha = new Date(Number(year), Number(month) - 1, 1)
+      .map(([numeroDoc, items]) => {
         return {
-          mesKey: key,
-          mesNombre: fecha.toLocaleDateString('es-PE', { year: 'numeric', month: 'long' }),
-          liquidaciones: items.sort((a, b) =>
-            new Date(b.fecha_procesamiento).getTime() - new Date(a.fecha_procesamiento).getTime()
-          )
+          numeroDocumento: numeroDoc,
+          nombreEmpresa: `Empresa RUC: ${numeroDoc}`,
+          liquidaciones: items.sort((a, b) => {
+            const fechaA = obtenerFechaDocumento(a)
+            const fechaB = obtenerFechaDocumento(b)
+            // Ordenar por fecha del documento, más antigua primero (ascendente)
+            return fechaA.localeCompare(fechaB)
+          })
         }
       })
-      .sort((a, b) => b.mesKey.localeCompare(a.mesKey))
+      .sort((a, b) => a.numeroDocumento.localeCompare(b.numeroDocumento))
   }, [liquidacionesFiltradas])
 
-  // Columnas de la tabla de liquidaciones
+  // Columnas de la tabla de liquidaciones (versión compacta)
   const columnasLiquidaciones: TableColumnsType<TLiquidacion> = [
-    {
-      title: "Nº Documento",
-      dataIndex: "numero_documento",
-      key: "numero_documento",
-      render: (text) => <strong>{text}</strong>,
-      sorter: (a, b) => a.numero_documento.localeCompare(b.numero_documento),
-    },
     {
       title: "Archivo",
       dataIndex: "nombre_archivo",
       key: "nombre_archivo",
+      width: "25%",
+      minWidth: 200,
       render: (text) => (
-        <span className="flex items-center gap-2">
-          <FileTextOutlined />
-          {text}
+        <div className="flex items-center gap-2">
+          <FileTextOutlined className="text-blue-500" />
+          <Tooltip title={text}>
+            <span className="text-xs font-medium truncate">
+              {text?.length > 30 ? `${text.substring(0, 30)}...` : text}
+            </span>
+          </Tooltip>
+        </div>
+      ),
+      ellipsis: true,
+    },
+    {
+      title: "Fecha Doc.",
+      key: "fecha_documento",
+      width: "12%",
+      minWidth: 90,
+      align: "center",
+      render: (_, record) => (
+        <span className="text-xs font-medium text-gray-700">
+          {obtenerFechaDocumento(record)}
         </span>
       ),
+      sorter: (a, b) => obtenerFechaDocumento(a).localeCompare(obtenerFechaDocumento(b)),
     },
     {
-      title: "Fecha Procesamiento",
-      dataIndex: "fecha_procesamiento",
-      key: "fecha_procesamiento",
-      render: (date) => new Date(date).toLocaleDateString("es-PE"),
-      sorter: (a, b) => new Date(a.fecha_procesamiento).getTime() - new Date(b.fecha_procesamiento).getTime(),
+      title: "Cantidad (kg)",
+      key: "cantidad_total",
+      width: "15%",
+      minWidth: 100,
+      align: "right",
+      render: (_, record) => (
+        <span className="text-xs font-bold text-green-700">
+          {calcularCantidadTotal(record).toFixed(0)}
+        </span>
+      ),
+      sorter: (a, b) => calcularCantidadTotal(a) - calcularCantidadTotal(b),
     },
     {
-      title: "Items",
-      dataIndex: "total_items",
-      key: "total_items",
-      align: "center",
+      title: "Costo Promedio",
+      key: "costo_promedio",
+      width: "15%",
+      minWidth: 110,
+      align: "right",
+      render: (_, record) => (
+        <span className="text-xs">S/ {calcularCostoPromedio(record).toFixed(4)}</span>
+      ),
+      sorter: (a, b) => calcularCostoPromedio(a) - calcularCostoPromedio(b),
     },
     {
-      title: "Total",
+      title: "Total Compra",
       dataIndex: "total_general",
       key: "total_general",
-      render: (total) => `S/ ${Number(total).toFixed(2)}`,
-      align: "right",
-    },
-    {
-      title: "Estado",
-      dataIndex: "estado",
-      key: "estado",
-      render: (estado) => (
-        <Tag color={estado === "procesado" ? "green" : estado === "error" ? "red" : "orange"}>
-          {estado.toUpperCase()}
-        </Tag>
+      width: "18%",
+      minWidth: 120,
+      render: (total) => (
+        <span className="text-xs font-bold text-green-700">
+          S/ {Number(total).toFixed(0)}
+        </span>
       ),
+      align: "right",
     },
     {
       title: "Acciones",
       key: "acciones",
+      width: "15%",
+      minWidth: 100,
       render: (_, record) => (
-        <div className="flex gap-2">
+        <div className="flex gap-1 justify-center">
           <Button
-            type="link"
+            type="text"
             icon={<EyeOutlined />}
             onClick={() => handleVerDetalle(record)}
-          >
-            Ver
-          </Button>
+            size="small"
+            className="text-blue-500 hover:text-blue-700"
+          />
           <Button
-            type="link"
+            type="text"
             danger
             icon={<DeleteOutlined />}
             onClick={() => handleEliminar(record.id!)}
-          >
-            Eliminar
-          </Button>
+            size="small"
+            className="text-red-500 hover:text-red-700"
+          />
         </div>
       ),
+    },
+  ]
+
+  // Columnas para la tabla tipo kardex
+  const columnasKardex = [
+    {
+      title: "Fecha",
+      dataIndex: "fecha",
+      key: "fecha",
+      width: "12%",
+      render: (fecha: string) => <span className="text-xs font-medium">{fecha}</span>,
+    },
+    {
+      title: "INGRESO",
+      children: [
+        {
+          title: "CANT",
+          dataIndex: "cantidadIngreso",
+          key: "cantidadIngreso",
+          width: "9%",
+          align: "right" as const,
+          render: (val: number) => (val && val > 0) ? <span className="text-xs text-blue-600">{val.toFixed(2)}</span> : "",
+        },
+        {
+          title: "P.UNIT",
+          dataIndex: "costoIngreso",
+          key: "costoIngreso",
+          width: "10%",
+          align: "right" as const,
+          render: (val: number) => (val && val > 0) ? <span className="text-xs">{val.toFixed(2)}</span> : "",
+        },
+        {
+          title: "TOTAL",
+          dataIndex: "totalIngreso",
+          key: "totalIngreso",
+          width: "11%",
+          align: "right" as const,
+          render: (val: number) => (val && val > 0) ? <span className="text-xs text-green-600">{val.toFixed(2)}</span> : "",
+        },
+      ],
+    },
+    {
+      title: "SALIDA",
+      children: [
+        {
+          title: "CANT",
+          dataIndex: "cantidadSalida",
+          key: "cantidadSalida",
+          width: "9%",
+          align: "right" as const,
+          render: (val: number) => val > 0 ? <span className="text-xs text-red-600">{val.toFixed(2)}</span> : "",
+        },
+        {
+          title: "P.UNIT",
+          dataIndex: "costoSalida",
+          key: "costoSalida",
+          width: "10%",
+          align: "right" as const,
+          render: (val: number) => val > 0 ? <span className="text-xs">{val.toFixed(4)}</span> : "",
+        },
+        {
+          title: "TOTAL",
+          dataIndex: "totalSalida",
+          key: "totalSalida",
+          width: "11%",
+          align: "right" as const,
+          render: (val: number) => val > 0 ? <span className="text-xs text-red-600">{val.toFixed(2)}</span> : "",
+        },
+      ],
+    },
+    {
+      title: "STOCK",
+      children: [
+        {
+          title: "CANT",
+          dataIndex: "stockActual",
+          key: "stockActual",
+          width: "9%",
+          align: "right" as const,
+          render: (val: number) => <span className="text-xs font-bold text-purple-600">{val.toFixed(2)}</span>,
+        },
+        {
+          title: "P.UNIT",
+          dataIndex: "costoPromedio",
+          key: "costoPromedio",
+          width: "10%",
+          align: "right" as const,
+          render: (val: number) => <span className="text-xs">{val.toFixed(4)}</span>,
+        },
+        {
+          title: "TOTAL",
+          dataIndex: "valorStock",
+          key: "valorStock",
+          width: "15%",
+          align: "right" as const,
+          render: (val: number) => <span className="text-xs font-bold text-purple-600">{val.toFixed(2)}</span>,
+        },
+      ],
     },
   ]
 
@@ -838,6 +1288,8 @@ const LiquidacionesPage = () => {
                 El sistema procesará automáticamente el PDF y extraerá los datos de la liquidación.
                 <br />
                 Soporta archivos PDF de hasta 10MB.
+                <br />
+                <strong>Nota:</strong> No se permite subir archivos que ya fueron procesados anteriormente.
               </p>
             </Dragger>
           </Spin>
@@ -853,7 +1305,7 @@ const LiquidacionesPage = () => {
         {/* Tabla de liquidaciones */}
         {liquidaciones.length > 0 && (
           <Card
-            title={`Liquidaciones Procesadas (${liquidacionesFiltradas.length}${filtroDocumento || filtroMes ? ` de ${liquidaciones.length}` : ''})`}
+            title={`Liquidaciones Procesadas (${liquidacionesFiltradas.length}${filtroDocumento || filtroEmpresa ? ` de ${liquidaciones.length}` : ''})`}
             extra={
               <div className="flex gap-3">
                 <Select
@@ -865,42 +1317,167 @@ const LiquidacionesPage = () => {
                   options={documentosUnicos.map(doc => ({ label: doc, value: doc }))}
                 />
                 <Select
-                  placeholder="Filtrar por mes"
+                  placeholder="Filtrar por empresa"
                   style={{ width: 200 }}
                   allowClear
-                  value={filtroMes || undefined}
-                  onChange={(value) => setFiltroMes(value || "")}
-                  options={mesesUnicos.map(mes => {
-                    const [year, month] = mes.split('-')
-                    const fecha = new Date(Number(year), Number(month) - 1)
-                    const label = fecha.toLocaleDateString('es-PE', { year: 'numeric', month: 'long' })
-                    return { label, value: mes }
-                  })}
+                  value={filtroEmpresa || undefined}
+                  onChange={(value) => setFiltroEmpresa(value || "")}
+                  options={empresasUnicas.map(empresa => ({ 
+                    label: `RUC: ${empresa}`, 
+                    value: empresa 
+                  }))}
                 />
               </div>
             }
           >
-            {liquidacionesAgrupadasPorMes.map((grupo) => (
-              <div key={grupo.mesKey} className="mb-6">
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-3 rounded-lg mb-3 border border-blue-200">
-                  <h3 className="text-lg font-semibold text-blue-800 capitalize">
-                    {grupo.mesNombre}
-                    <span className="ml-2 text-sm font-normal text-gray-600">
-                      ({grupo.liquidaciones.length} {grupo.liquidaciones.length === 1 ? 'liquidación' : 'liquidaciones'})
-                    </span>
-                  </h3>
+            {liquidacionesAgrupadasPorEmpresa.map((grupo) => {
+              const totalesGrupo = calcularTotalesGrupo(grupo.liquidaciones)
+              
+              // Calcular totales reales del kardex (stock actual)
+              const movimientosKardex = generarMovimientosKardex(grupo.liquidaciones)
+              const ultimoMovimiento = movimientosKardex[movimientosKardex.length - 1]
+              const stockRealTotal = ultimoMovimiento ? ultimoMovimiento.stockActual : 0
+              const valorStockReal = ultimoMovimiento ? ultimoMovimiento.valorStock : 0
+              
+              return (
+                <div key={grupo.numeroDocumento} className="mb-4">
+                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 px-3 py-2 rounded-lg mb-2 border border-green-200">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-base font-semibold text-green-800">
+                        RUC: {grupo.numeroDocumento}
+                      </h3>
+                      <div className="flex gap-4 items-center">
+                        <div className="flex gap-4 text-xs text-gray-600">
+                          <span>{grupo.liquidaciones.length} liquidaciones</span>
+                          <span>{stockRealTotal.toFixed(2)} kg total</span>
+                          <span className="font-semibold text-green-700">
+                            S/ {valorStockReal.toFixed(2)} total
+                          </span>
+                        </div>
+                        <Button
+                          size="small"
+                          onClick={() => setVistaKardex(!vistaKardex)}
+                          icon={vistaKardex ? <TableOutlined /> : <StockOutlined />}
+                        >
+                          {vistaKardex ? 'Vista Normal' : 'Vista Kardex'}
+                        </Button>
+                        {vistaKardex && (
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<PlusOutlined />}
+                            onClick={() => {
+                              setKardexSeleccionadoParaSalida(grupo.numeroDocumento)
+                              setModalSalidaKardexVisible(true)
+                            }}
+                            className="bg-red-500 hover:bg-red-600 border-red-500"
+                          >
+                            Registrar Salida
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {vistaKardex ? (
+                    // Vista Kardex
+                    <Table
+                      columns={columnasKardex}
+                      dataSource={generarMovimientosKardex(grupo.liquidaciones)}
+                      rowKey="key"
+                      pagination={false}
+                      size="small"
+                      className="kardex-table"
+                      style={{
+                        fontSize: '10px'
+                      }}
+                      components={{
+                        body: {
+                          row: (props: any) => (
+                            <tr {...props} style={{ height: '24px' }} />
+                          ),
+                        },
+                      }}
+                      summary={(pageData) => {
+                        const lastItem = pageData[pageData.length - 1]
+                        if (lastItem) {
+                          return (
+                            <Table.Summary.Row className="font-bold bg-blue-50">
+                              <Table.Summary.Cell index={0}></Table.Summary.Cell>
+                              <Table.Summary.Cell index={1}></Table.Summary.Cell>
+                              <Table.Summary.Cell index={2}></Table.Summary.Cell>
+                              <Table.Summary.Cell index={3}></Table.Summary.Cell>
+                              <Table.Summary.Cell index={4}></Table.Summary.Cell>
+                              <Table.Summary.Cell index={5}></Table.Summary.Cell>
+                              <Table.Summary.Cell index={6}></Table.Summary.Cell>
+                              <Table.Summary.Cell index={7} align="right">
+                                <span className="text-purple-600 font-bold">{lastItem.stockActual.toFixed(2)}</span>
+                              </Table.Summary.Cell>
+                              <Table.Summary.Cell index={8} align="right">
+                                <span className="text-purple-600">{lastItem.costoPromedio?.toFixed(4)}</span>
+                              </Table.Summary.Cell>
+                              <Table.Summary.Cell index={9} align="right">
+                                <span className="text-purple-600 font-bold">{lastItem.valorStock?.toFixed(2)}</span>
+                              </Table.Summary.Cell>
+                            </Table.Summary.Row>
+                          )
+                        }
+                        return null
+                      }}
+                    />
+                  ) : (
+                    // Vista Normal
+                    <Table
+                      columns={columnasLiquidaciones}
+                      dataSource={grupo.liquidaciones}
+                      rowKey="id"
+                      pagination={{
+                        pageSize: 50,
+                        showSizeChanger: true,
+                        showQuickJumper: true,
+                        showTotal: (total, range) => 
+                          `${range[0]}-${range[1]} de ${total} liquidaciones`,
+                        pageSizeOptions: ['25', '50', '100', '200'],
+                        size: 'small'
+                      }}
+                      scroll={{ y: 400 }}
+                      loading={cargando}
+                      size="small"
+                      className="compact-table"
+                      style={{
+                        fontSize: '11px'
+                      }}
+                      components={{
+                        body: {
+                          row: (props: any) => (
+                            <tr {...props} style={{ height: '32px' }} />
+                          ),
+                        },
+                      }}
+                      summary={() => (
+                        <Table.Summary.Row className="bg-green-50 font-bold border-t-2 border-green-200">
+                          <Table.Summary.Cell index={0} colSpan={2}>
+                            <span className="text-green-800 font-bold text-xs">TOTALES</span>
+                          </Table.Summary.Cell>
+                          <Table.Summary.Cell index={2} align="center">
+                            <span className="font-bold text-xs">{grupo.liquidaciones.reduce((sum, liq) => sum + liq.total_items, 0)}</span>
+                          </Table.Summary.Cell>
+                          <Table.Summary.Cell index={3} align="right">
+                            <span className="font-bold text-green-700 text-xs">{totalesGrupo.totalCantidad.toFixed(2)}</span>
+                          </Table.Summary.Cell>
+                          <Table.Summary.Cell index={4} align="right">
+                            <span className="font-bold text-xs">S/ {totalesGrupo.costoPromedioGrupo.toFixed(4)}</span>
+                          </Table.Summary.Cell>
+                          <Table.Summary.Cell index={5} align="right">
+                            <span className="font-bold text-green-700 text-xs">S/ {totalesGrupo.totalCompra.toFixed(2)}</span>
+                          </Table.Summary.Cell>
+                          <Table.Summary.Cell index={6}></Table.Summary.Cell>
+                        </Table.Summary.Row>
+                      )}
+                    />
+                  )}
                 </div>
-                <Table
-                  columns={columnasLiquidaciones}
-                  dataSource={grupo.liquidaciones}
-                  rowKey="id"
-                  pagination={false}
-                  scroll={{ x: 1000 }}
-                  loading={cargando}
-                  size="small"
-                />
-              </div>
-            ))}
+              )
+            })}
           </Card>
         )}
 
@@ -920,6 +1497,8 @@ const LiquidacionesPage = () => {
           onCancel={() => {
             setModalVisible(false)
             setLiquidacionesActuales([])
+            setEditandoFecha({})
+            setFechaEditada({})
           }}
           width={1300}
           centered
@@ -934,6 +1513,8 @@ const LiquidacionesPage = () => {
             <Button key="cancel" onClick={() => {
               setModalVisible(false)
               setLiquidacionesActuales([])
+              setEditandoFecha({})
+              setFechaEditada({})
             }}>
               Cancelar
             </Button>,
@@ -976,7 +1557,9 @@ const LiquidacionesPage = () => {
               </div>
 
               <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded border border-blue-200">
-                <strong>Nota:</strong> Puedes editar el número de kardex haciendo clic en el ícono de edición. Se guardarán todas las liquidaciones al confirmar.
+                <strong>Nota:</strong> Puedes editar el número de kardex haciendo clic en el ícono de edición y 
+                la <strong>fecha del documento</strong> haciendo clic en "Editar" junto a la fecha. 
+                La fecha se aplicará a todos los items de esa liquidación. Se guardarán todas las liquidaciones al confirmar.
               </div>
 
               {/* Lista de liquidaciones */}
@@ -985,11 +1568,55 @@ const LiquidacionesPage = () => {
                   {/* Cabecera de la liquidación */}
                   <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4 text-white">
                     <div className="flex justify-between items-center">
-                      <div>
+                      <div className="flex-1">
                         <h3 className="text-lg font-bold">
                           Liquidación #{liqIndex + 1}: {liquidacion.numero_documento}
                         </h3>
                         <p className="text-sm text-blue-100 mt-1">{liquidacion.nombre_archivo}</p>
+                        
+                        {/* Fecha del documento editable */}
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-sm text-blue-100">Fecha del documento:</span>
+                          {editandoFecha[liqIndex] ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={fechaEditada[liqIndex] || ""}
+                                onChange={(e) => setFechaEditada({ ...fechaEditada, [liqIndex]: e.target.value })}
+                                placeholder="DD/MM/YYYY"
+                                style={{ width: 120 }}
+                                size="small"
+                                autoFocus
+                                onPressEnter={() => handleGuardarFecha(liqIndex)}
+                              />
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={<SaveOutlined />}
+                                onClick={() => handleGuardarFecha(liqIndex)}
+                              />
+                              <Button
+                                size="small"
+                                icon={<CloseOutlined />}
+                                onClick={() => handleCancelarEdicionFecha(liqIndex)}
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span className="text-white font-medium">
+                                {liquidacion.items.length > 0 ? liquidacion.items[0].fecha : "Sin fecha"}
+                              </span>
+                              <Button
+                                type="link"
+                                size="small"
+                                icon={<EditOutlined />}
+                                onClick={() => handleEditarFecha(liqIndex)}
+                                className="text-blue-100 hover:text-white"
+                              >
+                                Editar
+                              </Button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <div className="text-right">
                         <div className="text-sm text-blue-100">Total Items</div>
@@ -1073,14 +1700,12 @@ const LiquidacionesPage = () => {
           )}
         </Modal>
 
-        {/* Modal de detalle con edición y gestión de salidas */}
+        {/* Modal de detalle con edición */}
         <ModalDetalleLiquidacion
           visible={detalleVisible}
           liquidacion={liquidacionActual}
-          saldos={calcularSaldosPorKardex}
           onClose={() => setDetalleVisible(false)}
           onGuardar={handleActualizarLiquidacion}
-          onAbrirModalSalida={handleAbrirModalSalida}
           onEditarItem={handleEditarItem}
           onGuardarItem={handleGuardarItem}
           onCancelarEdicionItem={handleCancelarEdicionItem}
@@ -1090,17 +1715,7 @@ const LiquidacionesPage = () => {
           guardando={guardando}
           uploadAgregarPDFProps={uploadAgregarPDFProps}
           procesando={procesando}
-        />
-
-        {/* Modal para registrar salida */}
-        <ModalRegistrarSalida
-          visible={modalSalidaVisible}
-          kardexSeleccionado={kardexSeleccionado}
-          saldos={calcularSaldosPorKardex}
-          nuevaSalida={nuevaSalida}
-          setNuevaSalida={setNuevaSalida}
-          onGuardar={handleGuardarSalida}
-          onCancelar={() => setModalSalidaVisible(false)}
+          onActualizarFechaItems={handleActualizarFechaItems}
         />
 
         {/* Modal de previsualización de PDF agregado */}
@@ -1226,6 +1841,16 @@ const LiquidacionesPage = () => {
             </div>
           </div>
         </Modal>
+
+        {/* Modal para registrar salida desde vista kardex */}
+        <ModalSalidaKardex
+          visible={modalSalidaKardexVisible}
+          onClose={() => setModalSalidaKardexVisible(false)}
+          onRegistrarSalida={handleRegistrarSalidaKardex}
+          numeroDocumentoEmpresa={kardexSeleccionadoParaSalida}
+          liquidaciones={liquidaciones}
+          fechaSeleccionada={fechaSalidaSeleccionada}
+        />
       </div>
     </ResponsiveContainer>
   )

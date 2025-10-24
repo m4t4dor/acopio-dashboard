@@ -1,3 +1,4 @@
+import { useState } from "react"
 import {
   Modal,
   Button,
@@ -8,26 +9,24 @@ import {
   Space,
   Input,
   InputNumber,
+  message,
 } from "antd"
 import {
   EditOutlined,
   SaveOutlined,
   CloseOutlined,
-  PlusOutlined,
   FileAddOutlined,
-  InfoCircleOutlined,
+  CalendarOutlined,
 } from "@ant-design/icons"
 import { Upload } from "antd"
 import type { UploadProps, TableColumnsType } from "antd"
-import { TItemLiquidacion, TLiquidacion, TSaldoKardex } from "@/types/liquidacion"
+import { TItemLiquidacion, TLiquidacion } from "@/types/liquidacion"
 
 interface ModalDetalleLiquidacionProps {
   visible: boolean
   liquidacion: TLiquidacion | null
-  saldos: TSaldoKardex[]
   onClose: () => void
   onGuardar: () => void
-  onAbrirModalSalida: (kardex: string) => void
   onEditarItem: (index: number, item: TItemLiquidacion) => void
   onGuardarItem: (index: number) => void
   onCancelarEdicionItem: (index: number) => void
@@ -37,15 +36,14 @@ interface ModalDetalleLiquidacionProps {
   guardando: boolean
   uploadAgregarPDFProps: UploadProps
   procesando: boolean
+  onActualizarFechaItems: (nuevaFecha: string) => void
 }
 
 const ModalDetalleLiquidacion: React.FC<ModalDetalleLiquidacionProps> = ({
   visible,
   liquidacion,
-  saldos,
   onClose,
   onGuardar,
-  onAbrirModalSalida,
   onEditarItem,
   onGuardarItem,
   onCancelarEdicionItem,
@@ -55,7 +53,42 @@ const ModalDetalleLiquidacion: React.FC<ModalDetalleLiquidacionProps> = ({
   guardando,
   uploadAgregarPDFProps,
   procesando,
+  onActualizarFechaItems,
 }) => {
+  // Estado para editar fecha de todos los items
+  const [editandoFechaGeneral, setEditandoFechaGeneral] = useState(false)
+  const [fechaGeneral, setFechaGeneral] = useState("")
+
+  // Función para iniciar edición de fecha general
+  const handleEditarFechaGeneral = () => {
+    const fechaActual = liquidacion?.items.length ? liquidacion.items[0].fecha : ""
+    setFechaGeneral(fechaActual)
+    setEditandoFechaGeneral(true)
+  }
+
+  // Función para guardar fecha general
+  const handleGuardarFechaGeneral = () => {
+    if (!fechaGeneral.trim()) {
+      message.error("La fecha no puede estar vacía")
+      return
+    }
+
+    const formatoFecha = /^\d{2}\/\d{2}\/\d{4}$/
+    if (!formatoFecha.test(fechaGeneral)) {
+      message.error("La fecha debe tener el formato DD/MM/YYYY")
+      return
+    }
+
+    onActualizarFechaItems(fechaGeneral.trim())
+    setEditandoFechaGeneral(false)
+    message.success("Fecha actualizada en todos los items")
+  }
+
+  // Función para cancelar edición de fecha general
+  const handleCancelarFechaGeneral = () => {
+    setEditandoFechaGeneral(false)
+    setFechaGeneral("")
+  }
   // Columnas para la tabla de items con edición
   const columnasItemsEditable: TableColumnsType<any> = [
     {
@@ -361,7 +394,7 @@ const ModalDetalleLiquidacion: React.FC<ModalDetalleLiquidacionProps> = ({
             <p className="font-semibold truncate">{liquidacion.nombre_archivo}</p>
           </div>
           <div>
-            <span className="text-gray-600 text-sm">Fecha:</span>
+            <span className="text-gray-600 text-sm">Fecha Procesamiento:</span>
             <p className="font-semibold">
               {new Date(liquidacion.fecha_procesamiento).toLocaleDateString("es-PE")}
             </p>
@@ -382,7 +415,63 @@ const ModalDetalleLiquidacion: React.FC<ModalDetalleLiquidacionProps> = ({
           </div>
         </div>
 
+        {/* Control para editar fecha de todos los items */}
+        <Card size="small" className="bg-yellow-50 border-yellow-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CalendarOutlined className="text-blue-500" />
+              <span className="text-sm font-medium">Fecha de todos los items:</span>
+              {editandoFechaGeneral ? (
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={fechaGeneral}
+                    onChange={(e) => setFechaGeneral(e.target.value)}
+                    placeholder="DD/MM/YYYY"
+                    style={{ width: 120 }}
+                    size="small"
+                    autoFocus
+                    onPressEnter={handleGuardarFechaGeneral}
+                  />
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<SaveOutlined />}
+                    onClick={handleGuardarFechaGeneral}
+                  >
+                    Guardar
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<CloseOutlined />}
+                    onClick={handleCancelarFechaGeneral}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-blue-600">
+                    {liquidacion?.items.length ? liquidacion.items[0].fecha : "Sin fecha"}
+                  </span>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={handleEditarFechaGeneral}
+                  >
+                    Editar
+                  </Button>
+                </div>
+              )}
+            </div>
+            <span className="text-xs text-gray-500">
+              Cambiar la fecha aplicará a todos los {liquidacion?.items.length || 0} items
+            </span>
+          </div>
+        </Card>
+
         {/* Cuadro de ayuda: Saldos por Kardex - Versión compacta */}
+        {/* COMENTADO: Este componente creaba confusión, la vista kardex es más clara
         {saldos.length > 0 && (
           <Card
             size="small"
@@ -434,24 +523,13 @@ const ModalDetalleLiquidacion: React.FC<ModalDetalleLiquidacionProps> = ({
                         </div>
                       </div>
                     </div>
-                    {saldo.saldo_pendiente > 0 && (
-                      <Button
-                        type="primary"
-                        size="small"
-                        block
-                        icon={<PlusOutlined />}
-                        onClick={() => onAbrirModalSalida(saldo.kardex)}
-                        className="text-xs h-7"
-                      >
-                        Registrar Salida
-                      </Button>
-                    )}
                   </div>
                 </div>
               ))}
             </div>
           </Card>
         )}
+        */}
 
         <Divider className="my-3">
           <span className="text-sm text-gray-500">Items de Liquidación (Editable)</span>

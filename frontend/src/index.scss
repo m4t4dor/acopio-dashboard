@@ -9,6 +9,80 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Estilos personalizados para las tablas */
+.compact-table {
+  width: 100% !important;
+  
+  .ant-table {
+    width: 100% !important;
+  }
+  
+  .ant-table-thead > tr > th {
+    background: #f8fafc !important;
+    border-bottom: 2px solid #e2e8f0 !important;
+    font-weight: 600 !important;
+    color: #374151 !important;
+    font-size: 11px !important;
+    padding: 8px 12px !important;
+  }
+  
+  .ant-table-tbody > tr > td {
+    padding: 6px 12px !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+  }
+  
+  .ant-table-tbody > tr:hover > td {
+    background: #f8fafc !important;
+  }
+  
+  // Asegurar que las columnas se distribuyan bien
+  .ant-table-tbody > tr > td:first-child {
+    width: 25% !important;
+  }
+  
+  .ant-table-tbody > tr > td:nth-child(2) {
+    width: 12% !important;
+  }
+  
+  .ant-table-tbody > tr > td:nth-child(3) {
+    width: 15% !important;
+  }
+  
+  .ant-table-tbody > tr > td:nth-child(4) {
+    width: 15% !important;
+  }
+  
+  .ant-table-tbody > tr > td:nth-child(5) {
+    width: 18% !important;
+  }
+  
+  .ant-table-tbody > tr > td:nth-child(6) {
+    width: 15% !important;
+  }
+}
+
+.kardex-table {
+  .ant-table-thead > tr > th {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%) !important;
+    border-bottom: 2px solid #0ea5e9 !important;
+    font-weight: 600 !important;
+    color: #0c4a6e !important;
+    font-size: 10px !important;
+    padding: 6px 8px !important;
+    text-align: center !important;
+  }
+  
+  .ant-table-tbody > tr > td {
+    padding: 4px 8px !important;
+    border-bottom: 1px solid #e0f2fe !important;
+    font-size: 10px !important;
+  }
+  
+  .ant-table-tbody > tr:hover > td {
+    background: #f0f9ff !important;
+  }
+}
+
 /* :root {
 	--primary: #0d2b3e;
 } */
