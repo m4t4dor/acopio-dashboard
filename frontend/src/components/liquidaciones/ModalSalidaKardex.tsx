@@ -15,6 +15,7 @@ interface ModalSalidaKardexProps {
   numeroDocumentoEmpresa: string
   liquidaciones: TLiquidacion[]
   fechaSeleccionada?: string
+  kardexPreseleccionado?: string // Kardex para pre-seleccionar en el modal
 }
 
 interface DatosSalida {
@@ -27,7 +28,8 @@ interface DatosSalida {
 }
 
 interface StockInfo {
-  stockDisponible: number
+  stockDisponible: number // Stock que había en la fecha seleccionada
+  stockActualReal: number // Stock real actual (límite máximo de venta)
   costoPromedio: number
   valorStock: number
   fechaCalculada: string
@@ -40,10 +42,12 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
   numeroDocumentoEmpresa,
   liquidaciones,
   fechaSeleccionada,
+  kardexPreseleccionado,
 }) => {
   const [form] = Form.useForm()
   const [stockInfo, setStockInfo] = useState<StockInfo>({
     stockDisponible: 0,
+    stockActualReal: 0,
     costoPromedio: 0,
     valorStock: 0,
     fechaCalculada: ""
@@ -115,6 +119,7 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
     if (!kardex) {
       return {
         stockDisponible: 0,
+        stockActualReal: 0,
         costoPromedio: 0,
         valorStock: 0,
         fechaCalculada: fecha
@@ -129,6 +134,7 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
     if (liquidacionesDelKardex.length === 0) {
       return {
         stockDisponible: 0,
+        stockActualReal: 0,
         costoPromedio: 0,
         valorStock: 0,
         fechaCalculada: fecha
@@ -138,30 +144,39 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
     // Usar la misma función que usa la tabla para generar movimientos
     const movimientosKardex = generarMovimientosKardex(liquidacionesDelKardex)
     
-    // Filtrar movimientos del kardex específico hasta la fecha seleccionada
+    // 1. Calcular STOCK ACTUAL REAL (hasta HOY, sin importar la fecha seleccionada)
+    const todosMovimientosDelKardex = movimientosKardex.filter(mov => mov.kardex === kardex)
+    const stockActualReal = todosMovimientosDelKardex.length > 0 
+      ? Math.max(0, todosMovimientosDelKardex[todosMovimientosDelKardex.length - 1].stockActual || 0)
+      : 0
+    
+    // 2. Calcular STOCK HISTÓRICO (hasta la fecha seleccionada)
     const movimientosDelKardexEnFecha = movimientosKardex.filter(mov => {
       const fechaMovimiento = dayjs(mov.fecha, 'DD/MM/YYYY').format('YYYY-MM-DD')
       const fechaComparacion = dayjs(fecha).format('YYYY-MM-DD')
       return mov.kardex === kardex && fechaMovimiento <= fechaComparacion
     })
 
-    // Si no hay movimientos, retornar ceros
+    // Si no hay movimientos en la fecha, retornar stock actual real
     if (movimientosDelKardexEnFecha.length === 0) {
       return {
         stockDisponible: 0,
+        stockActualReal: stockActualReal,
         costoPromedio: 0,
         valorStock: 0,
         fechaCalculada: fecha
       }
     }
 
-    // Obtener el último movimiento (el stock actual)
-    const ultimoMovimiento = movimientosDelKardexEnFecha[movimientosDelKardexEnFecha.length - 1]
+    // Obtener el último movimiento hasta la fecha seleccionada
+    const ultimoMovimientoEnFecha = movimientosDelKardexEnFecha[movimientosDelKardexEnFecha.length - 1]
+    const stockHistorico = Math.max(0, ultimoMovimientoEnFecha.stockActual || 0)
 
     return {
-      stockDisponible: Math.max(0, ultimoMovimiento.stockActual || 0),
-      costoPromedio: ultimoMovimiento.costoPromedio || 0,
-      valorStock: Math.max(0, ultimoMovimiento.valorStock || 0),
+      stockDisponible: stockHistorico, // Stock que había en la fecha
+      stockActualReal: stockActualReal, // Stock real actual (límite máximo)
+      costoPromedio: ultimoMovimientoEnFecha.costoPromedio || 0,
+      valorStock: Math.max(0, ultimoMovimientoEnFecha.valorStock || 0),
       fechaCalculada: fecha
     }
   }
@@ -341,9 +356,19 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
       const kardexOpciones = obtenerKardexDisponibles()
       setKardexDisponibles(kardexOpciones)
       
-      // Seleccionar el primer kardex CON STOCK por defecto si hay opciones
-      const kardexConStock = kardexOpciones.find(k => k.stock > 0)
-      const kardexInicial = kardexConStock ? kardexConStock.codigo : (kardexOpciones.length > 0 ? kardexOpciones[0].codigo : '')
+      // Determinar el kardex inicial
+      let kardexInicial = ''
+      
+      // 1. Si viene kardex pre-seleccionado desde la tabla, usarlo
+      if (kardexPreseleccionado && kardexOpciones.some(k => k.codigo === kardexPreseleccionado)) {
+        kardexInicial = kardexPreseleccionado
+      } 
+      // 2. Si no, seleccionar el primer kardex CON STOCK
+      else {
+        const kardexConStock = kardexOpciones.find(k => k.stock > 0)
+        kardexInicial = kardexConStock ? kardexConStock.codigo : (kardexOpciones.length > 0 ? kardexOpciones[0].codigo : '')
+      }
+      
       setKardexSeleccionado(kardexInicial)
       
       form.setFieldsValue({
@@ -376,7 +401,7 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
         }
       }
     }
-  }, [visible, fechaSeleccionada, numeroDocumentoEmpresa, liquidaciones])
+  }, [visible, fechaSeleccionada, numeroDocumentoEmpresa, liquidaciones, kardexPreseleccionado])
 
   const handleSubmit = async (values: any) => {
     try {
@@ -521,10 +546,10 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
         {/* Información de Stock Mejorada */}
         <Card 
           size="small" 
-          className={`border-2 ${stockInfo.stockDisponible > 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}
+          className={`border-2 ${stockInfo.stockActualReal > 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}
         >
           <div className="flex items-center justify-between mb-3">
-            <Title level={5} className={`${stockInfo.stockDisponible > 0 ? 'text-blue-700' : 'text-red-700'} m-0`}>
+            <Title level={5} className={`${stockInfo.stockActualReal > 0 ? 'text-blue-700' : 'text-red-700'} m-0`}>
               📊 Stock para Kardex {kardexSeleccionado}
             </Title>
             <Text className="text-gray-500 text-sm">
@@ -532,34 +557,54 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
             </Text>
           </div>
           
-          {stockInfo.stockDisponible > 0 ? (
-            <div className="grid grid-cols-3 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">
-                  {stockInfo.stockDisponible.toFixed(2)}
+          {stockInfo.stockActualReal > 0 ? (
+            <>
+              {/* Stock Actual Real (el que importa) */}
+              <div className="bg-green-100 border-2 border-green-300 rounded-lg p-3 mb-3">
+                <div className="text-center">
+                  <div className="text-xs text-green-700 font-medium mb-1">
+                    STOCK DISPONIBLE PARA VENTA
+                  </div>
+                  <div className="text-3xl font-bold text-green-700">
+                    {stockInfo.stockActualReal.toFixed(2)} kg
+                  </div>
+                  <div className="text-xs text-green-600 mt-1">
+                    ✓ Máximo que puedes vender hoy
+                  </div>
                 </div>
-                <div className="text-sm text-gray-600">kg disponibles</div>
               </div>
-              <div className="text-center">
-                <div className="text-lg font-semibold text-green-600">
-                  S/ {stockInfo.costoPromedio.toFixed(4)}
+              
+              {/* Información adicional */}
+              <div className="grid grid-cols-2 gap-3">
+                {stockInfo.stockDisponible !== stockInfo.stockActualReal && (
+                  <div className="text-center bg-blue-50 p-2 rounded">
+                    <div className="text-sm font-semibold text-blue-700">
+                      {stockInfo.stockDisponible.toFixed(2)} kg
+                    </div>
+                    <div className="text-xs text-gray-600">había en {dayjs(stockInfo.fechaCalculada).format('DD/MM/YYYY')}</div>
+                  </div>
+                )}
+                <div className="text-center bg-purple-50 p-2 rounded">
+                  <div className="text-sm font-semibold text-green-700">
+                    S/ {stockInfo.costoPromedio.toFixed(4)}
+                  </div>
+                  <div className="text-xs text-gray-600">costo promedio</div>
                 </div>
-                <div className="text-sm text-gray-600">costo promedio</div>
-              </div>
-              <div className="text-center">
-                <div className="text-lg font-semibold text-purple-600">
-                  S/ {stockInfo.valorStock.toFixed(2)}
+                <div className="text-center bg-purple-50 p-2 rounded">
+                  <div className="text-sm font-semibold text-purple-700">
+                    S/ {stockInfo.valorStock.toFixed(2)}
+                  </div>
+                  <div className="text-xs text-gray-600">valor total</div>
                 </div>
-                <div className="text-sm text-gray-600">valor total</div>
               </div>
-            </div>
+            </>
           ) : (
             <div className="text-center py-4">
               <div className="text-xl font-bold text-red-500 mb-2">
                 Sin stock disponible
               </div>
               <div className="text-sm text-gray-600">
-                No hay inventario para este kardex en la fecha seleccionada
+                No hay inventario para este kardex
               </div>
             </div>
           )}
@@ -696,8 +741,11 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
                   if (!value || parseFloat(value) <= 0) {
                     return Promise.reject('La cantidad debe ser mayor a 0')
                   }
-                  if (parseFloat(value) > stockInfo.stockDisponible) {
-                    return Promise.reject('La cantidad no puede exceder el stock disponible')
+                  // Validar contra el stock ACTUAL REAL (no el histórico)
+                  if (parseFloat(value) > stockInfo.stockActualReal) {
+                    return Promise.reject(
+                      `La cantidad no puede exceder el stock actual disponible (${stockInfo.stockActualReal.toFixed(2)} kg)`
+                    )
                   }
                   return Promise.resolve()
                 }
@@ -710,6 +758,7 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
               placeholder="0.00"
               onChange={(e) => handleCantidadChange(e.target.value)}
               suffix="kg"
+              disabled={stockInfo.stockActualReal <= 0}
             />
           </Form.Item>
         </div>
@@ -736,6 +785,7 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
               placeholder="0.0000"
               onChange={(e) => handlePrecioChange(e.target.value)}
               prefix="S/ "
+              disabled={stockInfo.stockActualReal <= 0}
             />
           </Form.Item>
 

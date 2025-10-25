@@ -68,9 +68,8 @@ const LiquidacionesPage = () => {
   const [kardexEditadoPreview, setKardexEditadoPreview] = useState<{ [key: number]: string }>({})
 
   // Estados para filtros
-  const [filtroDocumento, setFiltroDocumento] = useState<string>("")
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>("")
-  const [filtroKardexVista, setFiltroKardexVista] = useState<string>("")
+  const [filtroKardexVista, setFiltroKardexVista] = useState<string>("1") // Por defecto Kardex 1
 
   // Helper para obtener kardex únicos de una liquidación
   const obtenerKardexDeLiquidacion = (liquidacion: TLiquidacion): string[] => {
@@ -1042,11 +1041,6 @@ const LiquidacionesPage = () => {
     }
   }
 
-  // Obtener documentos únicos para el filtro
-  const documentosUnicos = useMemo(() => {
-    return Array.from(new Set(liquidaciones.map(l => l.numero_documento))).sort()
-  }, [liquidaciones])
-
   // Obtener empresas únicas para el filtro (basado en número de documento)
   const empresasUnicas = useMemo(() => {
     return Array.from(new Set(liquidaciones.map(l => l.numero_documento))).sort()
@@ -1056,16 +1050,12 @@ const LiquidacionesPage = () => {
   const liquidacionesFiltradas = useMemo(() => {
     let filtradas = [...liquidaciones]
 
-    if (filtroDocumento) {
-      filtradas = filtradas.filter(l => l.numero_documento === filtroDocumento)
-    }
-
     if (filtroEmpresa) {
       filtradas = filtradas.filter(l => l.numero_documento === filtroEmpresa)
     }
 
     return filtradas
-  }, [liquidaciones, filtroDocumento, filtroEmpresa])
+  }, [liquidaciones, filtroEmpresa])
 
   // Agrupar liquidaciones por número de documento de empresa (RUC)
   const liquidacionesAgrupadasPorEmpresa = useMemo(() => {
@@ -1486,20 +1476,12 @@ const LiquidacionesPage = () => {
         {/* Tabla de liquidaciones */}
         {liquidaciones.length > 0 && (
           <Card
-            title={`Liquidaciones Procesadas (${liquidacionesFiltradas.length}${filtroDocumento || filtroEmpresa ? ` de ${liquidaciones.length}` : ''})`}
+            title={`Liquidaciones Procesadas (${liquidacionesFiltradas.length}${filtroEmpresa ? ` de ${liquidaciones.length}` : ''})`}
             extra={
               <div className="flex gap-3">
                 <Select
-                  placeholder="Filtrar por documento"
-                  style={{ width: 200 }}
-                  allowClear
-                  value={filtroDocumento || undefined}
-                  onChange={(value) => setFiltroDocumento(value || "")}
-                  options={documentosUnicos.map(doc => ({ label: doc, value: doc }))}
-                />
-                <Select
                   placeholder="Filtrar por empresa"
-                  style={{ width: 200 }}
+                  style={{ width: 250 }}
                   allowClear
                   value={filtroEmpresa || undefined}
                   onChange={(value) => setFiltroEmpresa(value || "")}
@@ -1546,11 +1528,10 @@ const LiquidacionesPage = () => {
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-500">Filtrar:</span>
                             <Select
-                              placeholder="Todos los productos"
+                              placeholder="Seleccionar kardex"
                               style={{ width: 160 }}
-                              allowClear
-                              value={filtroKardexVista || undefined}
-                              onChange={(value) => setFiltroKardexVista(value || "")}
+                              value={filtroKardexVista || "1"}
+                              onChange={(value) => setFiltroKardexVista(value || "1")}
                               options={[
                                 { label: "Todos los kardex", value: "" },
                                 ...kardexDisponibles.map(kardex => ({ 
@@ -1566,7 +1547,7 @@ const LiquidacionesPage = () => {
                           size="small"
                           onClick={() => {
                             setVistaKardex(!vistaKardex)
-                            setFiltroKardexVista("") // Limpiar filtro al cambiar vista
+                            setFiltroKardexVista("1") // Resetear a Kardex 1 al cambiar vista
                           }}
                           icon={vistaKardex ? <TableOutlined /> : <StockOutlined />}
                         >
@@ -2052,6 +2033,7 @@ const LiquidacionesPage = () => {
           numeroDocumentoEmpresa={kardexSeleccionadoParaSalida}
           liquidaciones={liquidaciones}
           fechaSeleccionada={fechaSalidaSeleccionada}
+          kardexPreseleccionado={filtroKardexVista}
         />
       </div>
     </ResponsiveContainer>
