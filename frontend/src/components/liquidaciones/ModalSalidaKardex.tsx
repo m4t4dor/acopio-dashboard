@@ -181,6 +181,100 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
     }
   }
 
+  // Nueva función: Validar que una salida no deje stocks negativos en fechas posteriores
+  const validarSalidaSinStocksNegativos = (fecha: string, kardex: string, cantidadSalida: number): { valido: boolean, mensaje: string, stockMinimo?: number, fechaProblema?: string } => {
+    if (!kardex || cantidadSalida <= 0) {
+      return { valido: true, mensaje: '' }
+    }
+
+    // Filtrar liquidaciones por empresa
+    const liquidacionesDelKardex = liquidaciones.filter(liq => 
+      liq.numero_documento === numeroDocumentoEmpresa
+    )
+
+    if (liquidacionesDelKardex.length === 0) {
+      return { valido: true, mensaje: '' }
+    }
+
+    // Generar todos los movimientos actuales
+    const movimientosKardex = generarMovimientosKardex(liquidacionesDelKardex)
+    const movimientosDelKardex = movimientosKardex.filter(mov => mov.kardex === kardex)
+
+    if (movimientosDelKardex.length === 0) {
+      return { valido: true, mensaje: '' }
+    }
+
+    // Crear una lista de todos los movimientos incluyendo la nueva salida
+    const fechaSalidaFormat = dayjs(fecha).format('DD/MM/YYYY')
+    const fechaSalidaYYYYMMDD = dayjs(fecha).format('YYYY-MM-DD')
+    
+    const movimientosConNuevaSalida = [
+      ...movimientosDelKardex,
+      {
+        fecha: fechaSalidaFormat,
+        kardex: kardex,
+        cantidadIngreso: 0,
+        cantidadSalida: cantidadSalida,
+        costoIngreso: 0,
+        costoSalida: 0,
+        esNuevo: true, // Marcador para identificar la nueva salida
+        fechaComparacion: fechaSalidaYYYYMMDD
+      }
+    ]
+
+    // Ordenar cronológicamente TODOS los movimientos
+    movimientosConNuevaSalida.sort((a, b) => {
+      const fechaA = dayjs(a.fecha, 'DD/MM/YYYY').format('YYYY-MM-DD')
+      const fechaB = dayjs(b.fecha, 'DD/MM/YYYY').format('YYYY-MM-DD')
+      
+      if (fechaA !== fechaB) {
+        return fechaA.localeCompare(fechaB)
+      }
+      
+      // Si son del mismo día, las salidas van después de los ingresos
+      // EXCEPTO si es la nueva salida, que debe ir al final del día
+      if (a.esNuevo) return 1
+      if (b.esNuevo) return -1
+      
+      return 0
+    })
+
+    // Recalcular stock con la nueva salida incluida
+    let stockSimulado = 0
+    let costoPromedioSimulado = 0
+    let valorInventarioSimulado = 0
+    
+    for (const mov of movimientosConNuevaSalida) {
+      // Procesar ingresos
+      if (mov.cantidadIngreso > 0) {
+        const nuevoValorInventario = valorInventarioSimulado + (mov.cantidadIngreso * (mov.costoIngreso || 0))
+        const nuevoStock = stockSimulado + mov.cantidadIngreso
+        costoPromedioSimulado = nuevoStock > 0 ? nuevoValorInventario / nuevoStock : 0
+        
+        stockSimulado = nuevoStock
+        valorInventarioSimulado = nuevoValorInventario
+      }
+
+      // Procesar salidas
+      if (mov.cantidadSalida > 0) {
+        stockSimulado -= mov.cantidadSalida
+        valorInventarioSimulado = stockSimulado * costoPromedioSimulado
+        
+        // Verificar si el stock quedó negativo
+        if (stockSimulado < 0) {
+          return {
+            valido: false,
+            mensaje: `Esta salida causaría stock negativo (${stockSimulado.toFixed(2)} kg) el ${mov.fecha}. Stock insuficiente para realizar esta operación.`,
+            stockMinimo: stockSimulado,
+            fechaProblema: mov.fecha
+          }
+        }
+      }
+    }
+
+    return { valido: true, mensaje: '' }
+  }
+
   // Función auxiliar para generar movimientos con stock separado por kardex
   const generarMovimientosKardex = (liquidaciones: TLiquidacion[]) => {
     const movimientos: any[] = []
@@ -542,17 +636,18 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
       width={800}
       className="modal-salida-kardex"
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
         {/* Información de Stock Mejorada */}
         <Card 
           size="small" 
-          className={`border-2 ${stockInfo.stockActualReal > 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}
+          className={`border ${stockInfo.stockActualReal > 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}
+          style={{ padding: '4px' }}
         >
-          <div className="flex items-center justify-between mb-3">
-            <Title level={5} className={`${stockInfo.stockActualReal > 0 ? 'text-blue-700' : 'text-red-700'} m-0`}>
+          <div className="flex items-center justify-between mb-1">
+            <Title level={5} className={`${stockInfo.stockActualReal > 0 ? 'text-blue-700' : 'text-red-700'} m-0 text-xs`}>
               📊 Stock para Kardex {kardexSeleccionado}
             </Title>
-            <Text className="text-gray-500 text-sm">
+            <Text className="text-gray-500" style={{ fontSize: '10px' }}>
               {dayjs(stockInfo.fechaCalculada).format('DD/MM/YYYY')}
             </Text>
           </div>
@@ -560,50 +655,50 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
           {stockInfo.stockActualReal > 0 ? (
             <>
               {/* Stock Actual Real (el que importa) */}
-              <div className="bg-green-100 border-2 border-green-300 rounded-lg p-3 mb-3">
+              <div className="bg-green-100 border border-green-300 rounded p-2 mb-2">
                 <div className="text-center">
-                  <div className="text-xs text-green-700 font-medium mb-1">
+                  <div style={{ fontSize: '9px' }} className="text-green-700 font-medium mb-0.5 leading-tight">
                     STOCK DISPONIBLE PARA VENTA
                   </div>
-                  <div className="text-3xl font-bold text-green-700">
+                  <div className="text-2xl font-bold text-green-700 leading-none">
                     {stockInfo.stockActualReal.toFixed(2)} kg
                   </div>
-                  <div className="text-xs text-green-600 mt-1">
+                  <div style={{ fontSize: '9px' }} className="text-green-600 mt-0.5">
                     ✓ Máximo que puedes vender hoy
                   </div>
                 </div>
               </div>
               
               {/* Información adicional */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-1.5" style={{ fontSize: '10px' }}>
                 {stockInfo.stockDisponible !== stockInfo.stockActualReal && (
-                  <div className="text-center bg-blue-50 p-2 rounded">
-                    <div className="text-sm font-semibold text-blue-700">
+                  <div className="text-center bg-blue-50 p-1 rounded">
+                    <div className="text-sm font-semibold text-blue-700 leading-tight">
                       {stockInfo.stockDisponible.toFixed(2)} kg
                     </div>
-                    <div className="text-xs text-gray-600">había en {dayjs(stockInfo.fechaCalculada).format('DD/MM/YYYY')}</div>
+                    <div className="text-xs text-gray-600 leading-tight">había en {dayjs(stockInfo.fechaCalculada).format('DD/MM/YYYY')}</div>
                   </div>
                 )}
-                <div className="text-center bg-purple-50 p-2 rounded">
-                  <div className="text-sm font-semibold text-green-700">
-                    S/ {stockInfo.costoPromedio.toFixed(4)}
+                <div className="text-center bg-purple-50 p-1 rounded">
+                  <div className="text-sm font-semibold text-green-700 leading-tight">
+                    S/ {stockInfo.costoPromedio.toFixed(5)}
                   </div>
-                  <div className="text-xs text-gray-600">costo promedio</div>
+                  <div className="text-xs text-gray-600 leading-tight">costo promedio</div>
                 </div>
-                <div className="text-center bg-purple-50 p-2 rounded">
-                  <div className="text-sm font-semibold text-purple-700">
+                <div className="text-center bg-purple-50 p-1 rounded">
+                  <div className="text-sm font-semibold text-purple-700 leading-tight">
                     S/ {stockInfo.valorStock.toFixed(2)}
                   </div>
-                  <div className="text-xs text-gray-600">valor total</div>
+                  <div className="text-xs text-gray-600 leading-tight">valor total</div>
                 </div>
               </div>
             </>
           ) : (
-            <div className="text-center py-4">
-              <div className="text-xl font-bold text-red-500 mb-2">
+            <div className="text-center py-2">
+              <div className="text-lg font-bold text-red-500 mb-1">
                 Sin stock disponible
               </div>
-              <div className="text-sm text-gray-600">
+              <div className="text-xs text-gray-600">
                 No hay inventario para este kardex
               </div>
             </div>
@@ -613,49 +708,50 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
         {/* Información de Venta Mejorada */}
         <Card 
           size="small" 
-          className={`border-2 ${cantidad > 0 && precioUnitario > 0 ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}
+          className={`border ${cantidad > 0 && precioUnitario > 0 ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}
+          style={{ padding: '4px' }}
         >
-          <Title level={5} className={`${cantidad > 0 && precioUnitario > 0 ? 'text-green-700' : 'text-gray-700'} mb-3`}>
+          <Title level={5} className={`${cantidad > 0 && precioUnitario > 0 ? 'text-green-700' : 'text-gray-700'} mb-1 text-xs`}>
             💰 Información de Venta
           </Title>
           
           {cantidad > 0 && precioUnitario > 0 ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div className="text-center">
-                  <div className="text-lg font-bold text-blue-600">
+                  <div className="text-base font-bold text-blue-600 leading-tight">
                     {cantidad.toFixed(2)} kg
                   </div>
-                  <div className="text-sm text-gray-600">cantidad</div>
+                  <div className="text-xs text-gray-600">cantidad</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-lg font-bold text-green-600">
-                    S/ {precioUnitario.toFixed(4)}
+                  <div className="text-base font-bold text-green-600 leading-tight">
+                    S/ {precioUnitario.toFixed(5)}
                   </div>
-                  <div className="text-sm text-gray-600">precio/kg</div>
+                  <div className="text-xs text-gray-600">precio/kg</div>
                 </div>
               </div>
               
-              <div className="border-t pt-3">
+              <div className="border-t pt-2">
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-purple-600">
+                  <div className="text-2xl font-bold text-purple-600 leading-none">
                     S/ {(cantidad * precioUnitario).toFixed(2)}
                   </div>
-                  <div className="text-sm text-gray-600">total venta</div>
+                  <div className="text-xs text-gray-600 mt-0.5">total venta</div>
                 </div>
               </div>
               
               {stockInfo.costoPromedio > 0 && (
-                <div className="bg-blue-100 p-2 rounded text-center">
-                  <div className="text-xs text-blue-700">
-                    Costo base: S/ {stockInfo.costoPromedio.toFixed(4)} por kg
+                <div className="bg-blue-100 p-1 rounded text-center">
+                  <div className="text-xs text-blue-700 leading-tight">
+                    Costo base: S/ {stockInfo.costoPromedio.toFixed(5)} por kg
                   </div>
                 </div>
               )}
             </div>
           ) : (
-            <div className="text-center py-4">
-              <div className="text-gray-500 text-sm">
+            <div className="text-center py-2">
+              <div className="text-gray-500" style={{ fontSize: '11px' }}>
                 ℹ️ Complete cantidad y precio para ver el resumen
               </div>
             </div>
@@ -741,12 +837,34 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
                   if (!value || parseFloat(value) <= 0) {
                     return Promise.reject('La cantidad debe ser mayor a 0')
                   }
-                  // Validar contra el stock ACTUAL REAL (no el histórico)
-                  if (parseFloat(value) > stockInfo.stockActualReal) {
+                  
+                  const cantidadIngresada = parseFloat(value)
+                  
+                  // Validar contra el stock DISPONIBLE EN LA FECHA SELECCIONADA
+                  if (cantidadIngresada > stockInfo.stockDisponible) {
                     return Promise.reject(
-                      `La cantidad no puede exceder el stock actual disponible (${stockInfo.stockActualReal.toFixed(2)} kg)`
+                      `La cantidad excede el stock disponible en esa fecha (${stockInfo.stockDisponible.toFixed(2)} kg)`
                     )
                   }
+                  
+                  // Validar también contra el stock ACTUAL REAL (para no vender lo que ya no existe)
+                  if (cantidadIngresada > stockInfo.stockActualReal) {
+                    return Promise.reject(
+                      `La cantidad excede el stock actual disponible (${stockInfo.stockActualReal.toFixed(2)} kg). No puedes vender más de lo que tienes hoy.`
+                    )
+                  }
+                  
+                  // Validar que no deje stocks negativos en fechas posteriores
+                  const fechaFormulario = form.getFieldValue('fecha')
+                  if (fechaFormulario && kardexSeleccionado) {
+                    const fechaStr = dayjs(fechaFormulario).format('YYYY-MM-DD')
+                    const validacion = validarSalidaSinStocksNegativos(fechaStr, kardexSeleccionado, cantidadIngresada)
+                    
+                    if (!validacion.valido) {
+                      return Promise.reject(validacion.mensaje)
+                    }
+                  }
+                  
                   return Promise.resolve()
                 }
               }
@@ -758,7 +876,7 @@ const ModalSalidaKardex: React.FC<ModalSalidaKardexProps> = ({
               placeholder="0.00"
               onChange={(e) => handleCantidadChange(e.target.value)}
               suffix="kg"
-              disabled={stockInfo.stockActualReal <= 0}
+              disabled={stockInfo.stockDisponible <= 0 || stockInfo.stockActualReal <= 0}
             />
           </Form.Item>
         </div>
